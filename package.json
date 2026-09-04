@@ -1,0 +1,20 @@
+{
+  "name": "pqsession-relay",
+  "version": "2.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Dumb relay for pqsession end-to-end sessions: forwards opaque ciphertext only; never sees keys or plaintext. v2: crash fix, backpressure, byte shaping, secure defaults, dynamic CSP hash, local vendoring of crypto libraries, optional native TLS. v2.2: voice-call hardening (stage-aware errors, ScriptProcessor fallback, iOS sample-rate rebuild, mic-ended teardown) with an end-to-end voice test.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node server.js --check",
+    "vendor": "node vendor.mjs",
+    "test": "node test-relay.mjs && node test-frontend.mjs && node test-voice.mjs"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
