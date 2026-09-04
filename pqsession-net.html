@@ -1,0 +1,2606 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' blob: https://esm.sh 'sha256-mmiI2SAXHbzug9VVWnpqiSY2dVEbdlKdhWivnvLfBzw='; style-src 'unsafe-inline'; img-src data:; connect-src 'self' ws: wss:; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>pqsession · 抗量子端到端会话（联网中继版）</title>
+<!-- v2：不再从 Google Fonts 加载字体。第三方字体请求会把每次打开页面的 IP 与时间暴露给第三方，
+     也是一条不受本页控制的供应链（且在部分网络环境下根本不可达）。改用本机等宽字体；
+     若本机装有 JetBrains Mono / Syne 会自动使用。 -->
+<style>
+  :root{
+    --bg:#0a0c10; --bg2:#0f131a; --bg3:#0c0f15; --panel:#10151d;
+    --fg:#e8eaed; --muted:#79828d; --faint:#525a64;
+    --line:rgba(150,170,190,.12); --line2:rgba(150,170,190,.22);
+    --acc:#5be9b9; --acc2:#7af0c5; --acc-dim:rgba(91,233,185,.12); --acc-bd:rgba(91,233,185,.4);
+    --warn:#f4c065; --warn-dim:rgba(244,192,101,.1);
+    --err:#ff7a7a; --err-dim:rgba(255,122,122,.1);
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --disp:"Syne",var(--mono);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--fg); font-family:var(--mono);
+    font-size:14px; line-height:1.65; letter-spacing:.1px;
+    -webkit-font-smoothing:antialiased; min-height:100vh;
+    background-image:
+      radial-gradient(820px 520px at 78% -8%, rgba(91,233,185,.10), transparent 60%),
+      radial-gradient(700px 600px at -6% 8%, rgba(91,160,233,.07), transparent 55%),
+      linear-gradient(rgba(150,170,190,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(150,170,190,.035) 1px, transparent 1px);
+    background-size:auto,auto,42px 42px,42px 42px;
+    background-attachment:fixed;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.5;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.4'/%3E%3C/svg%3E");
+    mix-blend-mode:overlay;
+  }
+  .wrap{position:relative; z-index:1; max-width:760px; margin:0 auto; padding:38px 22px 90px}
+
+  header{margin-bottom:30px; animation:rise .6s both}
+  .eyebrow{font-size:11px; letter-spacing:3.5px; text-transform:uppercase; color:var(--acc); font-weight:500}
+  h1{font-family:var(--disp); font-weight:800; font-size:46px; line-height:.95; margin:.18em 0 .12em; letter-spacing:-1px}
+  h1 .dot{color:var(--acc)}
+  .tag{color:var(--muted); font-size:13.5px; max-width:64ch}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin-top:18px}
+  .chip{display:inline-flex; align-items:center; gap:7px; font-size:11.5px; padding:5px 11px;
+        border:1px solid var(--line2); border-radius:999px; color:var(--muted); background:rgba(255,255,255,.012)}
+  .chip .led{width:7px; height:7px; border-radius:50%; background:var(--faint); box-shadow:0 0 0 0 transparent}
+  .chip.on{color:var(--fg); border-color:var(--acc-bd)}
+  .chip.on .led{background:var(--acc); box-shadow:0 0 9px 1px var(--acc)}
+  .chip.off{color:var(--err); border-color:rgba(255,122,122,.35)}
+  .chip.off .led{background:var(--err); box-shadow:0 0 9px 1px var(--err)}
+  .chip.mid{color:var(--warn); border-color:rgba(244,192,101,.45)}
+  .chip.mid .led{background:var(--warn); box-shadow:0 0 9px 1px var(--warn); animation:pulse 1.1s infinite}
+  .chip.wait .led{animation:pulse 1.1s infinite}
+  .chip.lock{color:var(--acc); border-color:var(--acc-bd); background:var(--acc-dim)}
+
+  .banner{display:none; margin:18px 0 0; padding:13px 15px; border:1px solid rgba(244,192,101,.4);
+          background:var(--warn-dim); border-radius:12px; color:#f6d495; font-size:12.5px; line-height:1.6}
+  .banner.show{display:block; animation:rise .4s both}
+  .banner b{color:var(--warn)}
+
+  nav{display:flex; gap:6px; margin:26px 0 20px; padding:5px; border:1px solid var(--line);
+      border-radius:14px; background:rgba(255,255,255,.014); animation:rise .6s .05s both}
+  nav button{flex:1; appearance:none; border:0; background:transparent; color:var(--muted);
+             font-family:var(--mono); font-size:13px; font-weight:500; padding:10px 8px; border-radius:10px;
+             cursor:pointer; transition:.18s; letter-spacing:.4px}
+  nav button:hover{color:var(--fg)}
+  nav button.active{background:var(--acc); color:#05130d; font-weight:700}
+
+  .panel{display:none; border:1px solid var(--line); border-radius:16px; background:var(--panel);
+         padding:22px; animation:rise .5s both; box-shadow:0 18px 50px -28px rgba(0,0,0,.8)}
+  .panel.active{display:block}
+  .panel h2{font-family:var(--disp); font-weight:700; font-size:18px; margin:0 0 4px; letter-spacing:-.3px}
+  .panel .sub{color:var(--muted); font-size:12.5px; margin:0 0 18px}
+
+  label.fld{display:block; font-size:11px; letter-spacing:1.5px; text-transform:uppercase;
+            color:var(--faint); margin:16px 0 7px; font-weight:500}
+
+  .drop{border:1.5px dashed var(--line2); border-radius:13px; padding:22px 18px; text-align:center;
+        cursor:pointer; transition:.18s; background:rgba(255,255,255,.01)}
+  .drop:hover,.drop.drag{border-color:var(--acc); background:var(--acc-dim)}
+  .drop .ico{font-size:22px; opacity:.7}
+  .drop .t{font-size:13px; margin-top:6px}
+  .drop .h{font-size:11.5px; color:var(--faint); margin-top:3px}
+  .drop.has{border-style:solid; border-color:var(--acc-bd); background:var(--acc-dim)}
+  .drop.has .t{color:var(--acc2)}
+
+  input[type=password],input[type=text]{
+    width:100%; font-family:var(--mono); font-size:13.5px; color:var(--fg);
+    background:var(--bg3); border:1px solid var(--line2); border-radius:10px; padding:11px 13px; outline:none; transition:.16s}
+  input:focus{border-color:var(--acc); box-shadow:0 0 0 3px var(--acc-dim)}
+  input::placeholder{color:var(--faint)}
+
+  textarea.ta{width:100%; resize:vertical; font-family:var(--mono); font-size:13px; color:var(--fg);
+    background:var(--bg3); border:1px solid var(--line2); border-radius:10px; padding:11px 13px;
+    line-height:1.55; outline:none; transition:.16s; min-height:70px}
+  textarea.ta:focus{border-color:var(--acc); box-shadow:0 0 0 3px var(--acc-dim)}
+  textarea.ta::placeholder{color:var(--faint)}
+
+  .hide{display:none !important}
+
+  .btn{appearance:none; border:0; cursor:pointer; font-family:var(--mono); font-weight:700; font-size:14px;
+       padding:13px 18px; border-radius:11px; transition:.16s; letter-spacing:.3px; width:100%; margin-top:20px}
+  .btn.primary{background:var(--acc); color:#05130d}
+  .btn.primary:hover{background:var(--acc2); transform:translateY(-1px)}
+  .btn.primary:active{transform:translateY(0)}
+  .btn:disabled{opacity:.45; cursor:not-allowed; transform:none}
+  .btn.ghost{background:transparent; border:1px solid var(--line2); color:var(--fg); font-weight:500; width:auto; margin:0}
+  .btn.ghost:hover{border-color:var(--acc-bd); color:var(--acc2)}
+
+  .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+  .grow{flex:1; min-width:0}
+
+  .kres{display:none; margin-top:18px; border-top:1px solid var(--line); padding-top:16px}
+  .kres.show{display:block; animation:rise .4s both}
+  .fpr{display:flex; align-items:center; gap:10px; font-size:13px; flex-wrap:wrap}
+  .fpr code{color:var(--acc2); background:var(--acc-dim); padding:4px 9px; border-radius:7px; letter-spacing:1px; font-size:14px}
+  .fpr .hint{color:var(--faint); font-size:11.5px}
+  .fpr code.fp{white-space:normal; word-break:break-all; letter-spacing:.6px; font-size:12.5px; line-height:1.75; max-width:100%}
+  .chk{display:flex; gap:10px; align-items:flex-start; margin-top:14px; font-size:12.5px; color:var(--fg); line-height:1.55; cursor:pointer}
+  .chk input{margin-top:3px; accent-color:var(--acc); flex:none}
+  .pwbox{display:none; margin-top:14px; padding:13px 15px; border:1px solid var(--acc-bd); border-radius:12px; background:var(--acc-dim)}
+  .pwbox.show{display:block; animation:rise .3s both}
+  .pwbox .t{font-size:12.5px; margin-bottom:8px; color:var(--acc2)}
+  .secbanner{display:none; margin:18px 0 0; padding:13px 15px; border:1px solid rgba(255,122,122,.45);
+             background:var(--err-dim); border-radius:12px; color:#ffb3b3; font-size:12.5px; line-height:1.6}
+  .secbanner.show{display:block}
+  .secbanner b{color:var(--err)}
+  .trustbox{margin-top:18px; border:1px solid var(--line); border-radius:12px; padding:12px 14px; background:rgba(255,255,255,.01)}
+  .trustbox summary{cursor:pointer; font-size:12.5px; color:var(--muted); user-select:none}
+  .trustbox summary:hover{color:var(--fg)}
+  .trustlist{display:flex; flex-direction:column; gap:8px; margin-top:10px}
+  .trow{display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; font-size:12px; padding:8px 10px; border:1px solid var(--line); border-radius:9px}
+  .trow .nm{font-weight:700; color:var(--acc2)}
+  .trow .meta{color:var(--faint); font-size:11px; flex:1; min-width:160px}
+  textarea.peek{width:100%; height:70px; resize:vertical; font-family:var(--mono); font-size:10.5px;
+                color:var(--muted); background:var(--bg3); border:1px solid var(--line); border-radius:8px;
+                padding:8px; margin-top:10px; line-height:1.45}
+
+  .idline{font-size:11.5px; color:var(--muted); margin-top:14px; display:flex; gap:7px; align-items:center; flex-wrap:wrap}
+  .idline .k{color:var(--faint)}
+
+  .note{font-size:11.5px; color:var(--muted); margin-top:14px; padding:11px 13px; border-radius:10px;
+        background:var(--warn-dim); border:1px solid rgba(244,192,101,.28); line-height:1.6}
+  .note b{color:var(--warn)}
+  .note.good{background:var(--acc-dim); border-color:var(--acc-bd); color:var(--acc2)}
+  .note.good b{color:var(--acc2)}
+
+  .sessbar{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;
+           font-size:11.5px; color:var(--muted); margin-bottom:12px}
+  .sessbar code{color:var(--acc2); background:var(--acc-dim); padding:3px 8px; border-radius:7px; letter-spacing:.8px}
+  .transcript{border:1px solid var(--line); border-radius:12px; background:var(--bg3);
+              padding:14px; max-height:340px; overflow:auto; display:flex; flex-direction:column; gap:10px; min-height:120px}
+  .transcript:empty::after{content:"暂无消息 — 发出或收到的消息会显示在这里"; color:var(--faint); font-size:12px; margin:auto}
+  .bub{max-width:84%; padding:9px 12px; border-radius:13px; font-size:13px; line-height:1.5; word-break:break-word; white-space:pre-wrap}
+  .bub.out{align-self:flex-end; background:var(--acc-dim); border:1px solid var(--acc-bd); border-bottom-right-radius:4px}
+  .bub.in{align-self:flex-start; background:rgba(255,255,255,.03); border:1px solid var(--line2); border-bottom-left-radius:4px}
+  .bub .bubmeta{margin-top:5px; font-size:10px; color:var(--faint); letter-spacing:.3px}
+
+  .callbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:10px 12px;
+    border:1px solid var(--line); border-radius:12px; margin-bottom:12px; background:var(--bg3)}
+  .callbar .cstate{font-size:11.5px; color:var(--muted); flex:1; min-width:160px}
+  .callbar.live{border-color:var(--acc-bd); background:var(--acc-dim)}
+  .callbar.live .cstate{color:var(--acc2)}
+  .callbar.ringing{animation:vcpulse 1.1s ease-in-out infinite}
+  @keyframes vcpulse{0%,100%{border-color:var(--line2)} 50%{border-color:var(--acc); box-shadow:0 0 0 3px var(--acc-dim)}}
+
+  .console{margin-top:26px; border:1px solid var(--line); border-radius:14px; background:var(--bg3); overflow:hidden; animation:rise .6s .12s both}
+  .console .bar{display:flex; align-items:center; gap:8px; padding:9px 14px; border-bottom:1px solid var(--line); font-size:11px; color:var(--faint); letter-spacing:1.5px; text-transform:uppercase}
+  .console .bar .d{width:9px; height:9px; border-radius:50%; background:var(--acc); box-shadow:0 0 8px var(--acc)}
+  #log{margin:0; padding:13px 15px; max-height:230px; overflow:auto; font-size:11.5px; line-height:1.85}
+
+  footer{margin-top:34px; font-size:11px; color:var(--faint); line-height:1.7}
+  footer code{color:var(--muted)}
+  footer b{color:var(--warn)}
+  a{color:var(--acc2)}
+
+  @media(max-width:560px){ h1{font-size:38px} }
+  @keyframes rise{from{opacity:0; transform:translateY(10px)} to{opacity:1; transform:none}}
+  @keyframes pulse{0%,100%{opacity:1} 50%{opacity:.3}}
+  @media (prefers-reduced-motion:reduce){*{animation:none !important; transition:none !important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Post-Quantum End-to-End Session · Relayed</div>
+    <h1>pqsession<span class="dot">.</span></h1>
+    <p class="tag">混合后量子端到端加密会话：长期身份用 X25519 + ML-KEM-1024，握手为混合 PQXDH，逐条消息走对称棘轮。本版通过<b style="color:var(--acc2)">中继服务器</b>联网传输：服务器只搬运不透明密文，永远看不到私钥、会话密钥或明文；v2 起双方身份公钥与握手信令也用<b style="color:var(--acc2)">房间口令</b>派生的密钥加密，中继只拿到口令的哈希。抵御中间人仍靠<b style="color:var(--acc2)">带外核对完整指纹</b>。</p>
+    <div class="chips">
+      <span class="chip" id="ch-wc"><span class="led"></span>Web Crypto · 原生</span>
+      <span class="chip wait" id="ch-kem"><span class="led"></span>ML-KEM-1024 · noble</span>
+      <span class="chip off" id="ch-id"><span class="led"></span><span class="ct">身份 · 未载入</span></span>
+      <span class="chip off" id="ch-net"><span class="led"></span><span class="ct">中继 · 未连接</span></span>
+      <span class="chip off" id="ch-peer"><span class="led"></span><span class="ct">对方 · 未就位</span></span>
+      <span class="chip off" id="ch-sess"><span class="led"></span><span class="ct" id="ch-sess-t">会话 · 未建立</span></span>
+    </div>
+    <div class="banner" id="banner">
+      <b>算法库未能加载。</b> 这通常是因为在聊天预览沙箱里打开（它会拦截外部 CDN），或部署时既没有本地 vendor/ 也无法访问 esm.sh。
+      请按下方说明<b>部署后用浏览器访问</b>，并在服务器上执行 <b>npm run vendor</b> 把算法库固定到本地。
+    </div>
+    <div class="secbanner" id="secBanner">
+      <b>当前不是安全上下文（http:// 且非 localhost）。</b> 浏览器在这种环境下不提供 Web Crypto 与麦克风，本页无法生成密钥或建立会话。
+      请通过 <b>https://</b> 访问（中继支持 TLS_CERT / TLS_KEY 原生 TLS，或置于 TLS 反向代理之后），或在本机用 localhost 测试。
+    </div>
+  </header>
+
+  <nav>
+    <button data-tab="identity" class="active">① 身份</button>
+    <button data-tab="connect">② 连接</button>
+    <button data-tab="chat">③ 会话</button>
+  </nav>
+
+  <!-- ========== ① 身份 ========== -->
+  <section class="panel active" data-panel="identity">
+    <h2>你的身份</h2>
+    <p class="sub">长期身份密钥 = X25519 + ML-KEM-1024。公钥（指纹）用来让对方核对你是你；私钥永不离开浏览器。</p>
+
+    <button class="btn primary" id="genBtn">生成新身份密钥</button>
+
+    <label class="fld">或载入已有身份私钥（.key / .pqkey）</label>
+    <div class="drop" id="idDrop">
+      <div class="ico">🔑</div>
+      <div class="t" id="idDropT">拖入或点击选择 identity.key / identity.pqkey</div>
+      <div class="h">.pqkey 为口令加密私钥，载入时会要求输入口令</div>
+      <input id="idFile" type="file" class="hide" accept=".key,.pqkey,.json,application/json,application/octet-stream">
+    </div>
+    <div class="pwbox" id="pwBox">
+      <div class="t" id="pwTitle">该私钥文件已用口令加密，请输入口令：</div>
+      <div class="row">
+        <input id="pwIn" type="password" class="grow" placeholder="口令" autocomplete="off" style="min-width:200px">
+        <button class="btn ghost" id="pwOk">确定</button>
+        <button class="btn ghost" id="pwCancel">取消</button>
+      </div>
+    </div>
+
+    <div class="kres" id="idRes">
+      <div class="fpr">
+        <span>你的指纹（v2 · 256 位）：</span><code class="fp" id="idFp">—</code>
+        <button class="btn ghost" id="idFpCopy" style="padding:6px 10px; font-size:12px">复制</button>
+        <span class="hint">把 16 组全部通过可信渠道（当面 / 电话）告知对方核对，不要只比对开头几组</span>
+      </div>
+      <textarea class="peek" id="pubPeek" readonly placeholder="公钥 JSON 将显示在这里"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button class="btn ghost" id="dlPub">导出公钥 identity.pub</button>
+        <button class="btn ghost" id="dlKey">导出私钥</button>
+        <input id="keyPw" type="password" class="grow" placeholder="可选：导出私钥的加密口令（留空则明文）" style="min-width:200px">
+      </div>
+      <div class="idline"><span class="k">状态</span><span id="idState">未生成</span></div>
+    </div>
+
+    <div class="note" style="margin-top:18px">
+      <b>提示：</b>联网版无需手动交换 .pub：双方进入同一房间后会自动交换公钥（v2 起公钥经房间口令加密，中继看不到），但你<b>必须</b>带外核对完整指纹再继续。.pub 导出仅为备份 / 备用。
+    </div>
+  </section>
+
+  <!-- ========== ② 连接 ========== -->
+  <section class="panel" data-panel="connect">
+    <h2>连接中继并建立会话</h2>
+    <p class="sub">两端连到同一中继、加入同一房间号 → 自动交换公钥 → 核对指纹 → 自动握手。</p>
+
+    <label class="fld">中继服务器地址（默认与本页同源）</label>
+    <input id="srvUrl" type="text" placeholder="wss://your-relay.example.com">
+
+    <label class="fld">房间口令（两端必须一致；当面 / 可信渠道约定；不区分大小写，忽略空格与连字符）</label>
+    <div class="row">
+      <input id="roomCode" type="text" class="grow" placeholder="例如 K7M2QPRS4X（建议用右侧随机生成）" style="min-width:200px" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-gramm="false">
+      <button class="btn ghost" id="roomGen">随机生成</button>
+    </div>
+    <div class="note" style="margin-top:12px">v2 起房间口令<b>不再明文发给中继</b>：中继只收到它的哈希作为房间号；双方身份公钥与握手信令都用口令派生（Argon2id）的密钥加密。口令越随机，中继能看到的元数据越少；随机生成的 10 位口令约 49.5 bit 熵。即使口令被猜中，聊天内容仍受端到端棘轮保护。</div>
+
+    <div class="row" style="margin-top:18px">
+      <button class="btn primary" id="connectBtn" style="margin-top:0">连接 / 加入房间</button>
+      <button class="btn ghost" id="disconnectBtn">断开</button>
+    </div>
+    <div class="idline"><span class="k">连接状态</span><span id="netStatus">未连接</span></div>
+
+    <!-- 指纹核对：安全闸门 -->
+    <div class="kres" id="peerFpBox">
+      <div class="note good"><b>请核对对方指纹（关键步骤）</b>：以下指纹必须与对方当面 / 电话告知的完全一致，否则可能存在中间人。</div>
+      <div class="fpr" style="margin-top:12px">
+        <span>对方指纹：</span><code class="fp" id="peerFp">—</code>
+      </div>
+      <div class="fpr" style="margin-top:8px">
+        <span>你的指纹：</span><code class="fp" id="myFpShow">—</code><span class="hint">（供对方核对）</span>
+      </div>
+      <div class="idline"><span class="k">角色</span><span id="roleShow">—</span></div>
+      <div class="idline"><span class="k">信任状态</span><span id="trustState">—</span></div>
+      <div id="trustNew">
+        <label class="chk"><input type="checkbox" id="fpCheck"><span>我已通过当面或语音通话，<b>逐组</b>核对了对方的完整指纹（不是从屏幕或聊天记录里复制来的）。</span></label>
+        <div class="row" style="margin-top:10px">
+          <input id="peerNameIn" type="text" class="grow" placeholder="给这个联系人起个名字（可选，例如：小王）" maxlength="32" style="min-width:200px" autocomplete="off" spellcheck="false">
+          <label class="chk" style="margin:0"><input type="checkbox" id="rememberChk" checked><span>记住这个指纹（用你的身份私钥派生的密钥加密后存于本浏览器）</span></label>
+        </div>
+        <div class="idline" id="nameWarn" style="color:var(--err)"></div>
+      </div>
+      <button class="btn primary" id="verifyBtn">✓ 指纹一致，建立会话</button>
+      <div class="idline"><span id="verifyState"></span></div>
+      <div class="idline"><span class="k">握手</span><span id="hsState">—</span></div>
+    </div>
+
+    <details class="trustbox" id="trustBox">
+      <summary>已核对的联系人（<span id="trustCount">0</span>）· 加密存于本浏览器</summary>
+      <div class="note" style="margin-top:10px">只保存指纹、你起的名字和「房间口令哈希 → 上次对方指纹」，<b>不含任何密钥</b>。数据用你的身份私钥派生的密钥加密后随本站域名存放在这个浏览器里（localStorage）：没有载入同一份身份文件就解不开，每个身份各有一份列表。作用：同一指纹再次出现时自动通过核对并直接建立会话；出现新指纹而你在等的是已核对过的人时，页面提醒你怀疑；给新指纹起的名字若与已有联系人重名，会被当作"密钥变更"要求二次确认；同一房间口令下对方指纹与上次不同，会红色告警。连接中途被替换出现的指纹即使在列表里也不会自动通过。</div>
+      <div id="trustList" class="trustlist"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn ghost" id="trustExport">导出 JSON</button>
+        <button class="btn ghost" id="trustImportBtn">导入 JSON</button>
+        <input id="trustImport" type="file" class="hide" accept=".json,application/json">
+        <button class="btn ghost" id="trustClear">清空全部</button>
+      </div>
+      <div class="idline" id="trustPersist"></div>
+    </details>
+  </section>
+
+  <!-- ========== ③ 会话 ========== -->
+  <section class="panel" data-panel="chat">
+    <h2>会话</h2>
+    <div id="chatGate">
+      <p class="sub">会话尚未建立。请先在「② 连接」完成指纹核对与握手。</p>
+      <div class="note">完成握手后，这里会自动解锁聊天界面。消息与文件都经棘轮逐条加密后通过中继转发。</div>
+    </div>
+
+    <div id="chatLive">
+      <div class="sessbar">
+        <span>会话 ID <code id="sidShow">—</code></span>
+        <span>已发送 <b id="ctrSend">0</b> · 已接收 <b id="ctrRecv">0</b></span>
+      </div>
+      <div class="idline" style="margin:0 0 12px"><span class="k">已核对的对方</span><span id="sessPeerName" style="color:var(--acc2)"></span><code class="fp" id="sessPeerFp" style="color:var(--acc2); background:var(--acc-dim); padding:3px 8px; border-radius:7px">—</code></div>
+
+      <div class="callbar" id="callBar">
+        <button class="btn ghost" id="callBtn">📞 语音通话</button>
+        <span class="cstate" id="callState">端到端加密 · 恒定码率抗流量分析（需 HTTPS 与麦克风权限，建议佩戴耳机）</span>
+        <button class="btn ghost hide" id="callAccept">✓ 接听</button>
+        <button class="btn ghost hide" id="callDecline">✕ 拒绝</button>
+        <button class="btn ghost hide" id="callMute">🔇 静音</button>
+        <button class="btn ghost hide" id="callEnd">⏹ 挂断</button>
+      </div>
+
+      <div class="transcript" id="transcript"></div>
+
+      <label class="fld">发送消息</label>
+      <div class="row">
+        <textarea class="ta grow" id="msgIn" placeholder="输入消息，Enter 发送（Shift+Enter 换行）…" style="min-height:52px" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-gramm="false"></textarea>
+        <button class="btn primary" id="sendBtn" style="margin-top:0; width:auto">发送</button>
+      </div>
+
+      <label class="fld">发送文件</label>
+      <div class="drop" id="fileDrop">
+        <div class="ico">📎</div>
+        <div class="t">拖入或点击选择要加密发送的文件</div>
+        <div class="h">支持大文件：自动分块、逐块加密（每块独立前向保密）经中继转发，对方收齐后自动下载</div>
+        <input id="fileMsg" type="file" class="hide">
+      </div>
+
+      <button class="btn ghost" id="endBtn" style="margin-top:20px; width:100%">结束会话</button>
+      <div class="note" style="margin-top:14px">本协议未实现「事后泄露自愈」（post-compromise security）。<b>建议定期结束并重新握手</b>以刷新密钥。</div>
+    </div>
+  </section>
+
+  <div class="console">
+    <div class="bar"><span class="d"></span>运行日志</div>
+    <div id="log"></div>
+  </div>
+
+  <footer>
+    pqsession（联网中继版 v2）· 端到端在浏览器内完成，中继只转发密文。<br>
+    <b>诚实告知：</b>这是<b>自研、未经审计</b>的协议；底层 <code>@noble/post-quantum</code> 的 ML-KEM <b>未经审计、无侧信道防护</b>；JS 无法可靠擦除内存密钥（本版只做尽力而为的清零）。中继仍会看到<b>元数据</b>（IP、时间、房间口令的哈希、消息大小与节奏），但看不到内容，v2 起也看不到双方身份公钥。生死攸关的威胁模型请用 <b>Signal</b>。<b>务必带外核对完整指纹</b>，并使用 <code>https://</code> 与 <code>wss://</code>。
+  </footer>
+</div>
+<script type="module">
+/* ============================================================================
+ * pqsession · 抗量子端到端会话
+ * 第 1 段 / 3：加密核心（取自 pqfilecrypt，浏览器原生 Web Crypto + 注入 ML-KEM / Argon2id）
+ * ==========================================================================*/
+const MAGIC = new Uint8Array([0x50, 0x51, 0x46, 0x43, 0x52, 0x59, 0x50, 0x54]); // "PQFCRYPT"
+const VERSION = 1;
+const MODE_HYBRID = 1;
+const MODE_PASSWORD = 2;
+
+const CHUNK_SIZE = 64 * 1024;   // 明文分块（64 KiB）
+const KEY_LEN = 32;             // AES-256
+const SALT_LEN = 16;
+const NONCE_LEN = 12;
+const X25519_LEN = 32;          // 原始 X25519 公钥 / 私钥长度
+
+// Argon2id 默认参数（写进文件头，解密端自动读取）
+const ARGON_TIME = 3;
+const ARGON_MEM_KIB = 64 * 1024; // 64 MiB
+const ARGON_PAR = 4;
+
+// RFC 8410：X25519 私钥的 PKCS#8 DER 前缀（用于把 32 字节原始私钥导入 Web Crypto）
+const PKCS8_X25519_PREFIX = new Uint8Array([
+  0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+  0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
+]);
+
+// v2：指纹的域分隔标签，以及尽力而为的密钥清零（JS 无法保证，但能缩短密钥在堆上的存活窗口）
+const FP_LABEL = new TextEncoder().encode("pqsession-fingerprint-v2");
+function wipe(...arrs) { for (const a of arrs) { if (a && typeof a.fill === "function") a.fill(0); } }
+
+// ----------------------------------------------------------------------------
+// 小工具
+// ----------------------------------------------------------------------------
+function concatBytes(...arrays) {
+  let total = 0;
+  for (const a of arrays) total += a.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrays) { out.set(a, off); off += a.length; }
+  return out;
+}
+
+function bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+function u16be(n) { return new Uint8Array([(n >>> 8) & 0xff, n & 0xff]); }
+function u32be(n) {
+  return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
+}
+function readU16be(b, o) { return (b[o] << 8) | b[o + 1]; }
+function readU32be(b, o) {
+  return ((b[o] * 0x1000000) + (b[o + 1] << 16) + (b[o + 2] << 8) + b[o + 3]) >>> 0;
+}
+
+const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function b64encode(bytes) {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i], b = bytes[i + 1], c = bytes[i + 2];
+    out += B64_CHARS[a >> 2];
+    out += B64_CHARS[((a & 3) << 4) | (b === undefined ? 0 : b >> 4)];
+    out += b === undefined ? "=" : B64_CHARS[((b & 15) << 2) | (c === undefined ? 0 : c >> 6)];
+    out += c === undefined ? "=" : B64_CHARS[c & 63];
+  }
+  return out;
+}
+function b64decode(str) {
+  const clean = str.replace(/[^A-Za-z0-9+/]/g, "");
+  const len = Math.floor(clean.length * 3 / 4);
+  const out = new Uint8Array(len);
+  let p = 0, buf = 0, bits = 0;
+  for (let i = 0; i < clean.length; i++) {
+    buf = (buf << 6) | B64_CHARS.indexOf(clean[i]);
+    bits += 6;
+    if (bits >= 8) { bits -= 8; out[p++] = (buf >> bits) & 0xff; }
+  }
+  return out.subarray(0, p);
+}
+
+// ----------------------------------------------------------------------------
+// 工厂：注入 { subtle, randomBytes, mlkem, argon2id }
+//   subtle      : SubtleCrypto（浏览器 window.crypto.subtle / Node webcrypto.subtle）
+//   randomBytes : (n)=>Uint8Array 安全随机字节
+//   mlkem       : { keygen()->{publicKey,secretKey},
+//                   encapsulate(pk)->{cipherText,sharedSecret},
+//                   decapsulate(ct,sk)->sharedSecret }   (ML-KEM-1024 / FIPS 203)
+//   argon2id    : async ({password,salt,iterations,memorySizeKiB,parallelism,hashLen})
+//                   -> Uint8Array(hashLen)
+// ----------------------------------------------------------------------------
+function createPQCrypto({ subtle, randomBytes, mlkem, argon2id }) {
+  if (!subtle) throw new Error("createPQCrypto: 缺少 subtle (Web Crypto)");
+  if (!randomBytes) throw new Error("createPQCrypto: 缺少 randomBytes");
+
+  // ---- 原语封装 -----------------------------------------------------------
+  async function sha256(data) {
+    return new Uint8Array(await subtle.digest("SHA-256", data));
+  }
+
+  async function importAesKey(rawKey) {
+    return subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
+  }
+
+  // 12 字节 nonce = 11 字节大端计数器 + 1 字节结束标记（0x01=最后一块）。
+  function nonce(counter, isLast) {
+    const n = new Uint8Array(NONCE_LEN);
+    // counter 写入前 11 字节（大端）。文件分块上限远小于 2^53，安全。
+    let c = counter;
+    for (let i = 10; i >= 0; i--) { n[i] = c & 0xff; c = Math.floor(c / 256); }
+    n[11] = isLast ? 0x01 : 0x00;
+    return n;
+  }
+
+  // ---- 流式 AEAD 内核（与 Python encrypt_stream/decrypt_stream 对齐）-------
+  async function encryptStream(rawKey, header, data) {
+    const aesKey = await importAesKey(rawKey);
+    // 切块；空文件也产生一个空块（与 Python 行为一致）。
+    const chunks = [];
+    for (let off = 0; off < data.length; off += CHUNK_SIZE) {
+      chunks.push(data.subarray(off, Math.min(off + CHUNK_SIZE, data.length)));
+    }
+    if (chunks.length === 0) chunks.push(new Uint8Array(0));
+
+    const parts = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      const blob = new Uint8Array(await subtle.encrypt(
+        { name: "AES-GCM", iv: nonce(i, isLast), additionalData: header, tagLength: 128 },
+        aesKey, chunks[i],
+      ));
+      parts.push(u32be(blob.length), blob);
+    }
+    return concatBytes(...parts);
+  }
+
+  async function decryptStream(rawKey, header, body) {
+    const aesKey = await importAesKey(rawKey);
+    // 先收集所有 [len][blob] 块，最后一块即为 is_last（与 Python 预读判定等价）。
+    const blocks = [];
+    let off = 0;
+    while (off < body.length) {
+      if (off + 4 > body.length) throw new Error("文件意外结束（可能已损坏或被截断）");
+      const clen = readU32be(body, off); off += 4;
+      if (off + clen > body.length) throw new Error("文件意外结束（可能已损坏或被截断）");
+      blocks.push(body.subarray(off, off + clen)); off += clen;
+    }
+    if (blocks.length === 0) throw new Error("密文为空或已损坏");
+
+    const out = [];
+    for (let i = 0; i < blocks.length; i++) {
+      const isLast = i === blocks.length - 1;
+      let pt;
+      try {
+        pt = new Uint8Array(await subtle.decrypt(
+          { name: "AES-GCM", iv: nonce(i, isLast), additionalData: header, tagLength: 128 },
+          aesKey, blocks[i],
+        ));
+      } catch (e) {
+        throw new Error("认证失败：文件被篡改 / 被截断，或密钥 / 口令不正确。");
+      }
+      out.push(pt);
+    }
+    return concatBytes(...out);
+  }
+
+  // ---- 密钥派生 -----------------------------------------------------------
+  // 混合 KEM 组合器：ikm = ss_mlkem || ss_x25519，info = SHA-256(header)。
+  async function deriveKeyHybrid(ssMlkem, ssX25519, salt, header) {
+    const ikm = concatBytes(ssMlkem, ssX25519);
+    const info = await sha256(header);
+    const hk = await subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+    const bits = await subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-512", salt, info }, hk, KEY_LEN * 8,
+    );
+    return new Uint8Array(bits);
+  }
+
+  async function deriveKeyArgon2(password, salt, timeCost, memKiB, parallelism) {
+    if (!argon2id) throw new Error("口令模式需要注入 argon2id 实现");
+    const pw = typeof password === "string" ? new TextEncoder().encode(password) : password;
+    const key = await argon2id({
+      password: pw, salt,
+      iterations: timeCost, memorySizeKiB: memKiB, parallelism, hashLen: KEY_LEN,
+    });
+    return key instanceof Uint8Array ? key : new Uint8Array(key);
+  }
+
+  // ---- X25519（Web Crypto；原始私钥用 PKCS#8 包装存取）-------------------
+  async function x25519GenerateRaw() {
+    const kp = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+    const pub = new Uint8Array(await subtle.exportKey("raw", kp.publicKey));
+    const pkcs8 = new Uint8Array(await subtle.exportKey("pkcs8", kp.privateKey));
+    const priv = new Uint8Array(pkcs8.subarray(pkcs8.length - X25519_LEN)); // 末 32 字节为原始私钥
+    wipe(pkcs8);
+    return { publicKey: pub, privateKey: priv };
+  }
+
+  async function x25519ImportPrivate(rawPriv) {
+    if (!(rawPriv instanceof Uint8Array) || rawPriv.length !== X25519_LEN) throw new Error("X25519 私钥长度不正确");
+    const pkcs8 = concatBytes(PKCS8_X25519_PREFIX, rawPriv);
+    const k = await subtle.importKey("pkcs8", pkcs8, { name: "X25519" }, false, ["deriveBits"]);
+    wipe(pkcs8);                                          // 私钥已进入不可导出的 CryptoKey，清掉裸副本
+    return k;
+  }
+
+  async function x25519ImportPublic(rawPub) {
+    if (!(rawPub instanceof Uint8Array) || rawPub.length !== X25519_LEN) throw new Error("X25519 公钥长度不正确");
+    // Web Crypto 规范要求 X25519 deriveBits 在共享秘密全零（低阶点）时抛 OperationError，
+    // 因此无需在这里另做低阶点检查。
+    return subtle.importKey("raw", rawPub, { name: "X25519" }, false, []);
+  }
+
+  async function x25519Exchange(privKeyObj, peerPubRaw) {
+    const peer = await x25519ImportPublic(peerPubRaw);
+    const bits = await subtle.deriveBits({ name: "X25519", public: peer }, privKeyObj, X25519_LEN * 8);
+    return new Uint8Array(bits);
+  }
+
+  // ---- 文件头 -------------------------------------------------------------
+  function buildHeaderHybrid(ephPub, mlkemCt, salt) {
+    return concatBytes(
+      MAGIC, new Uint8Array([VERSION, MODE_HYBRID]),
+      ephPub, u16be(mlkemCt.length), mlkemCt, salt,
+    );
+  }
+
+  function buildHeaderPassword(salt, timeCost, memKiB, parallelism) {
+    return concatBytes(
+      MAGIC, new Uint8Array([VERSION, MODE_PASSWORD]),
+      salt, new Uint8Array([timeCost]), u32be(memKiB), new Uint8Array([parallelism]),
+    );
+  }
+
+  // 解析文件头，返回 { mode, raw(头部原始字节), bodyOffset, ...字段 }
+  function parseHeader(buf) {
+    const need = (n, off) => { if (off + n > buf.length) throw new Error("文件头不完整"); };
+    need(MAGIC.length, 0);
+    if (!bytesEqual(buf.subarray(0, MAGIC.length), MAGIC))
+      throw new Error("不是有效的 PQFCRYPT 文件（魔数不匹配）");
+    let o = MAGIC.length;
+    need(2, o);
+    const version = buf[o], mode = buf[o + 1]; o += 2;
+    if (version !== VERSION) throw new Error("不支持的文件版本：" + version);
+
+    const info = { version, mode };
+    if (mode === MODE_HYBRID) {
+      need(X25519_LEN, o); const ephPub = buf.subarray(o, o + X25519_LEN); o += X25519_LEN;
+      need(2, o); const ctlen = readU16be(buf, o); o += 2;
+      need(ctlen, o); const mlkemCt = buf.subarray(o, o + ctlen); o += ctlen;
+      need(SALT_LEN, o); const salt = buf.subarray(o, o + SALT_LEN); o += SALT_LEN;
+      Object.assign(info, { ephPub, mlkemCt, salt });
+    } else if (mode === MODE_PASSWORD) {
+      need(SALT_LEN, o); const salt = buf.subarray(o, o + SALT_LEN); o += SALT_LEN;
+      need(1, o); const timeCost = buf[o]; o += 1;
+      need(4, o); const memKiB = readU32be(buf, o); o += 4;
+      need(1, o); const parallelism = buf[o]; o += 1;
+      Object.assign(info, { salt, timeCost, memKiB, parallelism });
+    } else {
+      throw new Error("未知模式：" + mode);
+    }
+    info.raw = buf.subarray(0, o);
+    info.bodyOffset = o;
+    return info;
+  }
+
+  // ---- 密钥对（JSON 对象，与 Python .pub / .key 格式一致）-----------------
+  async function generateKeypair() {
+    const x = await x25519GenerateRaw();
+    const mk = mlkem.keygen();
+    const mkPub = mk.publicKey, mkSecret = mk.secretKey;
+    const pub = {
+      alg: "X25519+ML-KEM-1024",
+      x25519_pub: b64encode(x.publicKey),
+      mlkem_pub: b64encode(mkPub),
+    };
+    const key = {
+      ...pub,
+      x25519_priv: b64encode(x.privateKey),
+      mlkem_secret: b64encode(mkSecret),
+    };
+    const fp = await fingerprint(x.publicKey, mkPub);
+    return { pub, key, fingerprint: fp };
+  }
+
+  // v2 指纹：完整 256 位 SHA-256（旧版只取 64 位）。64 位在经典算力下已可被大规模 GPU 集群做
+  // 第二原像搜索（约 2^64 次 X25519 密钥生成，配合固定的 ML-KEM 公钥即可伪造出同指纹的身份），
+  // 在量子算力（Grover）下更只剩 2^32；对一个宣称抗量子的系统，指纹必须至少 256 位。
+  // 显示为 16 组、每组 4 个十六进制字符，方便当面 / 电话逐组核对。
+  async function fingerprint(...parts) {
+    const digest = await sha256(concatBytes(FP_LABEL, ...parts));
+    const hex = Array.from(digest).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return hex.match(/.{4}/g).join(" ");
+  }
+
+  // ---- 高层加 / 解密 ------------------------------------------------------
+  async function encryptHybrid(recipientPub, data) {
+    if (!mlkem) throw new Error("混合模式需要注入 ML-KEM 实现");
+    const xPubRaw = b64decode(recipientPub.x25519_pub);
+    const mkPub = b64decode(recipientPub.mlkem_pub);
+
+    const eph = await x25519GenerateRaw();
+    const ephPrivObj = await x25519ImportPrivate(eph.privateKey);
+    const ssX = await x25519Exchange(ephPrivObj, xPubRaw);
+    const enc = mlkem.encapsulate(mkPub);
+    const mlkemCt = enc.cipherText, ssK = enc.sharedSecret;
+
+    const salt = randomBytes(SALT_LEN);
+    const header = buildHeaderHybrid(eph.publicKey, mlkemCt, salt);
+    const key = await deriveKeyHybrid(ssK, ssX, salt, header);
+    const body = await encryptStream(key, header, data);
+    return concatBytes(header, body);
+  }
+
+  async function encryptPassword(password, data, params = {}) {
+    const timeCost = params.timeCost ?? ARGON_TIME;
+    const memKiB = params.memKiB ?? ARGON_MEM_KIB;
+    const parallelism = params.parallelism ?? ARGON_PAR;
+    const salt = randomBytes(SALT_LEN);
+    const header = buildHeaderPassword(salt, timeCost, memKiB, parallelism);
+    const key = await deriveKeyArgon2(password, salt, timeCost, memKiB, parallelism);
+    const body = await encryptStream(key, header, data);
+    return concatBytes(header, body);
+  }
+
+  // 自动识别模式；混合模式需 opts.keyObj，口令模式需 opts.password。
+  async function decrypt(fileBytes, opts = {}) {
+    const hdr = parseHeader(fileBytes);
+    const body = fileBytes.subarray(hdr.bodyOffset);
+    let key;
+    if (hdr.mode === MODE_PASSWORD) {
+      if (opts.password == null) throw new Error("该文件为口令模式，请提供口令。");
+      key = await deriveKeyArgon2(opts.password, hdr.salt, hdr.timeCost, hdr.memKiB, hdr.parallelism);
+    } else if (hdr.mode === MODE_HYBRID) {
+      if (!opts.keyObj) throw new Error("该文件为混合公钥模式，请提供你的私钥文件 (.key)。");
+      if (!mlkem) throw new Error("混合模式需要注入 ML-KEM 实现");
+      const xPriv = await x25519ImportPrivate(b64decode(opts.keyObj.x25519_priv));
+      const ssX = await x25519Exchange(xPriv, hdr.ephPub);
+      const ssK = mlkem.decapsulate(hdr.mlkemCt, b64decode(opts.keyObj.mlkem_secret));
+      key = await deriveKeyHybrid(ssK, ssX, hdr.salt, hdr.raw);
+    } else {
+      throw new Error("未知模式：" + hdr.mode);
+    }
+    const plaintext = await decryptStream(key, hdr.raw, body);
+    return { plaintext, mode: hdr.mode };
+  }
+
+  return {
+    // 高层
+    generateKeypair, encryptHybrid, encryptPassword, decrypt, fingerprint,
+    // 中层（便于测试 / 复用 / 跨实现对拍）
+    encryptStream, decryptStream, deriveKeyHybrid, deriveKeyArgon2,
+    buildHeaderHybrid, buildHeaderPassword, parseHeader,
+    x25519GenerateRaw, x25519ImportPrivate, x25519ImportPublic, x25519Exchange,
+    // 工具 / 常量
+    b64encode, b64decode, concatBytes, wipe,
+    MODE_HYBRID, MODE_PASSWORD, CHUNK_SIZE, KEY_LEN, SALT_LEN,
+    ARGON_TIME, ARGON_MEM_KIB, ARGON_PAR,
+  };
+}
+
+
+/* ============================================================================
+ * 第 2 段 / 3：会话协议层（混合 PQXDH 握手 + 对称棘轮）
+ * ==========================================================================*/
+/*
+ * pqsession —— 抗量子端到端会话协议层（构建于 pqcrypto-core 之上）
+ * ==================================================================
+ *
+ * 在 pqfilecrypt 的混合加密核心（X25519 + ML-KEM-1024 + HKDF-SHA512 +
+ * AES-256-GCM 流式 AEAD）之上，增加一个**会话**层，目标安全属性：
+ *
+ *   1. 混合（hybrid）：经典与后量子任一未被攻破，会话即安全。
+ *      - 经典安全靠 X25519，后量子安全靠 ML-KEM-1024。
+ *   2. 双向认证（mutual auth）：双方身份都被绑定，可抵御中间人。
+ *      认证锚点是**带外核对过指纹**的长期身份公钥（TOFU）。
+ *   3. 前向保密（forward secrecy）：长期私钥日后泄露，也无法解开历史会话。
+ *      - 经典侧 FS 来自双方一次性 X25519 临时密钥的 DH（dh_ee）。
+ *      - 后量子侧 FS 来自对发起方一次性 ML-KEM 临时公钥的封装（k2）。
+ *      二者均喂入 HKDF，缺任一即无法还原根密钥。
+ *   4. 逐消息前向保密：对称棘轮，每条消息一把一次性密钥，用后即弃。
+ *   5. 防重放 / 防反射 / 防截断：消息号 + 方向 + 会话ID 全绑进 AEAD 的 AAD。
+ *   6. 转录绑定：握手中所有公开值（双方身份公钥、临时公钥、KEM 密文）
+ *      经 SHA-512 串成转录散列，喂入根密钥派生 —— 抵御未知密钥共享 / 重组。
+ *
+ * 握手是 2 条消息的互认证混合 PQXDH：
+ *      A(发起) --[INVITE]--> B(应答) --[ACCEPT]--> A
+ *   ACCEPT 内含 B 的密钥确认 MAC；A 校验通过即确认 B 身份与同一根密钥。
+ *   A 对 B 的认证由 A 的首条聊天消息（AEAD）隐式完成（同 X3DH 惯例）。
+ *
+ * 注意（务必如实告知用户）：这是从零实现的自定义协议，未经独立安全审计；
+ * 底层 ML-KEM 实现（@noble/post-quantum）官方声明未经审计、且不防侧信道；
+ * JS 环境无法可靠擦除内存中的密钥。极端威胁模型请改用 Signal 等经审计工具。
+ */
+
+
+// ---- 会话层常量 -----------------------------------------------------------
+const S_MAGIC   = new TextEncoder().encode("PQSESSv1");   // 8 字节
+const T_INVITE  = 1;
+const T_ACCEPT  = 2;
+const T_MSG     = 3;
+const DIR_A2B   = 0x01;   // 发起方 -> 应答方
+const DIR_B2A   = 0x02;   // 应答方 -> 发起方
+const MAX_SKIP  = 512;    // 单条消息最多允许向前跳过的序号数（防 DoS）
+const MAX_SKIP_TOTAL = 1024; // 缓存的跳过消息密钥总量上限（超出淘汰最旧；旧版无上限，恶意中继可让缓存无限增长）
+const MLKEM_PK_LEN = 1568, MLKEM_CT_LEN = 1568, MLKEM_SK_LEN = 3168; // ML-KEM-1024（FIPS 203）固定长度
+const INVITE_LEN = 8 + 1 + 32 + 2 + MLKEM_PK_LEN + 2 + MLKEM_CT_LEN;        // 3181
+const ACCEPT_LEN = 8 + 1 + 32 + 2 + MLKEM_CT_LEN + 2 + MLKEM_CT_LEN + 32;   // 3213
+const PUB_ALG   = "X25519+ML-KEM-1024";
+
+const enc = new TextEncoder();
+function L(s) { return enc.encode(s); }  // label -> bytes
+
+function createPQSession(deps) {
+  const core = createPQCrypto(deps);
+  const { subtle, randomBytes, mlkem } = deps;
+  const {
+    concatBytes, b64encode, b64decode, wipe,
+    x25519GenerateRaw, x25519ImportPrivate, x25519Exchange,
+    encryptStream, decryptStream, generateKeypair, fingerprint,
+  } = core;
+
+  // ---- 原语 ---------------------------------------------------------------
+  async function sha512(data) {
+    return new Uint8Array(await subtle.digest("SHA-512", data));
+  }
+  // HKDF(ikm, salt, info) -> len 字节。Web Crypto 的 HKDF = extract+expand。
+  async function hkdf(ikm, salt, info, len) {
+    const k = await subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+    const bits = await subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-512", salt, info }, k, len * 8);
+    return new Uint8Array(bits);
+  }
+  async function hmac(key, data) {
+    const k = await subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    return new Uint8Array(await subtle.sign("HMAC", k, data));
+  }
+  function ctEqual(a, b) {
+    if (a.length !== b.length) return false;
+    let d = 0;
+    for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+    return d === 0;
+  }
+  function u16be(n) { return new Uint8Array([(n >>> 8) & 0xff, n & 0xff]); }
+  function u32be(n) {
+    return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
+  }
+  function readU16be(b, o) { return (b[o] << 8) | b[o + 1]; }
+  function readU32be(b, o) {
+    return ((b[o] * 0x1000000) + (b[o + 1] << 16) + (b[o + 2] << 8) + b[o + 3]) >>> 0;
+  }
+
+  // 校验身份公钥束的形状、算法与长度：畸形输入不得进入 KEM / X25519 实现。
+  function validatePub(pub) {
+    if (!pub || typeof pub !== "object") throw new Error("身份公钥束无效");
+    if (pub.alg !== PUB_ALG) throw new Error("身份公钥算法不受支持：" + String(pub.alg));
+    if (typeof pub.x25519_pub !== "string" || typeof pub.mlkem_pub !== "string") throw new Error("身份公钥束字段缺失");
+    const x = b64decode(pub.x25519_pub), m = b64decode(pub.mlkem_pub);
+    if (x.length !== 32 || m.length !== MLKEM_PK_LEN) throw new Error("身份公钥长度不正确");
+    return { x, m };
+  }
+  function hex(b) { return Array.from(b).map((v) => v.toString(16).padStart(2, "0")).join(""); }
+
+  // 身份公钥 -> 规范字节（X25519 公钥 || ML-KEM 公钥）。用于转录与封装。
+  function idRaw(pub) {
+    const { x, m } = validatePub(pub);
+    return concatBytes(x, m);
+  }
+
+  const SALT0 = new Uint8Array(64); // HKDF 的零盐（root 派生用固定标签做域分离）
+
+  // 由根密钥扩展出双向链密钥、确认密钥、会话ID。
+  async function expandRoot(ikm, th) {
+    const root = await hkdf(ikm, SALT0, concatBytes(L("PQSESSv1-root"), th), 32);
+    const ckA2B = await hkdf(root, SALT0, L("PQSESSv1-chain-A2B"), 32);
+    const ckB2A = await hkdf(root, SALT0, L("PQSESSv1-chain-B2A"), 32);
+    const confirmKey = await hkdf(root, SALT0, L("PQSESSv1-confirm"), 32);
+    const sid = await hkdf(root, SALT0, L("PQSESSv1-sid"), 8);
+    return { root, ckA2B, ckB2A, confirmKey, sid };
+  }
+
+  function buildSession(role, sid, ckSend, ckRecv) {
+    return {
+      role, sid,                 // role: "A"(发起) | "B"(应答)
+      ckSend, ckRecv,
+      nSend: 0, nRecv: 0,
+      skipped: new Map(),        // key: "<dir>:<n>" -> Uint8Array(MK)
+      sendDir: role === "A" ? DIR_A2B : DIR_B2A,
+      recvDir: role === "A" ? DIR_B2A : DIR_A2B,
+    };
+  }
+
+  // ========================================================================
+  //  握手
+  // ========================================================================
+
+  // A 发起：用对方（已带外核对指纹的）公钥生成 INVITE。
+  // 返回 { invite(Uint8Array), pending(私密待续状态，勿外泄) }。
+  async function sessionInvite(myKey, peerPub) {
+    if (!mlkem) throw new Error("会话需要注入 ML-KEM 实现");
+    const peer = validatePub(peerPub);
+    const ea = await x25519GenerateRaw();               // 一次性 X25519
+    const ma = mlkem.keygen();                          // 一次性 ML-KEM（用于后量子前向保密）
+    const e1 = mlkem.encapsulate(peer.m);               // 封装到 B 身份 -> 认证 B(后量子)
+    const ct1 = e1.cipherText, k1 = e1.sharedSecret;
+
+    const invite = concatBytes(
+      S_MAGIC, new Uint8Array([T_INVITE]),
+      ea.publicKey,                                     // 32
+      u16be(ma.publicKey.length), ma.publicKey,
+      u16be(ct1.length), ct1,
+    );
+    const pending = {
+      myKey, peerPub,
+      eaPriv: ea.privateKey, eaPub: ea.publicKey,
+      maSecret: ma.secretKey, maPub: ma.publicKey,
+      ct1, k1, invite,
+    };
+    return { invite, pending };
+  }
+
+  // v2：握手数据长度固定，一律精确校验（旧版只检查“不超长”，畸形长度会流入 KEM 实现）。
+  function parseInvite(buf) {
+    if (!(buf instanceof Uint8Array) || buf.length !== INVITE_LEN || !ctEqual(buf.subarray(0, 8), S_MAGIC))
+      throw new Error("不是有效的会话握手数据（长度或魔数不符）");
+    let o = 8;
+    if (buf[o++] !== T_INVITE) throw new Error("这不是 INVITE（邀请）数据");
+    const eaPub = buf.subarray(o, o + 32); o += 32;
+    const mlen = readU16be(buf, o); o += 2; const maPub = buf.subarray(o, o + mlen); o += mlen;
+    const clen = readU16be(buf, o); o += 2; const ct1 = buf.subarray(o, o + clen); o += clen;
+    if (mlen !== MLKEM_PK_LEN || clen !== MLKEM_CT_LEN || o !== buf.length) throw new Error("INVITE 数据长度不符");
+    return { eaPub, maPub, ct1 };
+  }
+
+  // B 应答：用自己的私钥 + 对方（已带外核对指纹的）公钥处理 INVITE，
+  // 直接建立 B 侧会话，并产出 ACCEPT（含密钥确认）。
+  async function sessionAccept(myKey, peerPub, inviteBytes) {
+    if (!mlkem) throw new Error("会话需要注入 ML-KEM 实现");
+    const inv = parseInvite(inviteBytes);
+    const peer = validatePub(peerPub);
+
+    const eb = await x25519GenerateRaw();
+    // 六个共享秘密
+    const mySk = b64decode(myKey.mlkem_secret);
+    if (mySk.length !== MLKEM_SK_LEN) throw new Error("本方 ML-KEM 私钥长度不正确");
+    const k1 = mlkem.decapsulate(inv.ct1, mySk); wipe(mySk);                // 认证 B(PQ)
+    const myXRaw = b64decode(myKey.x25519_priv);
+    const myXPriv = await x25519ImportPrivate(myXRaw); wipe(myXRaw);
+    const ebPriv = await x25519ImportPrivate(eb.privateKey); wipe(eb.privateKey);
+    const dh_ss   = await x25519Exchange(myXPriv, peer.x);                   // 身份-身份(经典互认证)
+    const dh_ae_b = await x25519Exchange(myXPriv, inv.eaPub);               // A临时-B身份
+    const dh_ee   = await x25519Exchange(ebPriv, inv.eaPub);                // 经典FS
+    const e2 = mlkem.encapsulate(inv.maPub);                                // 后量子FS（到A的一次性公钥）
+    const ct2 = e2.cipherText, k2 = e2.sharedSecret;
+    const e3 = mlkem.encapsulate(peer.m);                                   // 认证 A(PQ)
+    const ct3 = e3.cipherText, k3 = e3.sharedSecret;
+
+    const idA = concatBytes(peer.x, peer.m), idB = idRaw(myKey);
+    const th = await sha512(concatBytes(
+      L("PQSESSv1-transcript"), idA, idB,
+      inv.eaPub, inv.maPub, inv.ct1, eb.publicKey, ct2, ct3,
+    ));
+    const ikm = concatBytes(k1, k2, k3, dh_ss, dh_ae_b, dh_ee); // 顺序固定：PQ 在前，经典在后
+    wipe(k1, k2, k3, dh_ss, dh_ae_b, dh_ee);
+    const ks = await expandRoot(ikm, th); wipe(ikm);
+    const confirmB = await hmac(ks.confirmKey, concatBytes(th, new Uint8Array([0x42]))); // "B"
+    wipe(ks.root, ks.confirmKey);
+
+    const accept = concatBytes(
+      S_MAGIC, new Uint8Array([T_ACCEPT]),
+      eb.publicKey,
+      u16be(ct2.length), ct2,
+      u16be(ct3.length), ct3,
+      confirmB,
+    );
+    // B 侧：发送链 = B2A，接收链 = A2B
+    const session = buildSession("B", ks.sid, ks.ckB2A, ks.ckA2B);
+    return { accept, session };
+  }
+
+  function parseAccept(buf) {
+    if (!(buf instanceof Uint8Array) || buf.length !== ACCEPT_LEN || !ctEqual(buf.subarray(0, 8), S_MAGIC))
+      throw new Error("不是有效的会话握手数据（长度或魔数不符）");
+    let o = 8;
+    if (buf[o++] !== T_ACCEPT) throw new Error("这不是 ACCEPT（接受）数据");
+    const ebPub = buf.subarray(o, o + 32); o += 32;
+    const c2 = readU16be(buf, o); o += 2; const ct2 = buf.subarray(o, o + c2); o += c2;
+    const c3 = readU16be(buf, o); o += 2; const ct3 = buf.subarray(o, o + c3); o += c3;
+    const confirmB = buf.subarray(o, o + 32); o += 32;
+    if (c2 !== MLKEM_CT_LEN || c3 !== MLKEM_CT_LEN || o !== buf.length) throw new Error("ACCEPT 数据长度不符");
+    return { ebPub, ct2, ct3, confirmB };
+  }
+
+  // A 完成：用 pending + ACCEPT 建立 A 侧会话；校验 B 的密钥确认。
+  async function sessionComplete(pending, acceptBytes) {
+    const ac = parseAccept(acceptBytes);
+    const { myKey, peerPub } = pending;
+    const peer = validatePub(peerPub);
+
+    const myXRaw = b64decode(myKey.x25519_priv);
+    const myXPriv = await x25519ImportPrivate(myXRaw); wipe(myXRaw);
+    const eaPriv = await x25519ImportPrivate(pending.eaPriv);
+    const dh_ss   = await x25519Exchange(myXPriv, peer.x);
+    const dh_ae_b = await x25519Exchange(eaPriv, peer.x);
+    const dh_ee   = await x25519Exchange(eaPriv, ac.ebPub);
+    const k1 = pending.k1;
+    const k2 = mlkem.decapsulate(ac.ct2, pending.maSecret);  // 用一次性私钥解封 -> 后量子FS
+    const mySk = b64decode(myKey.mlkem_secret);
+    if (mySk.length !== MLKEM_SK_LEN) throw new Error("本方 ML-KEM 私钥长度不正确");
+    const k3 = mlkem.decapsulate(ac.ct3, mySk); wipe(mySk);  // 证明 A 身份(PQ)
+
+    const idA = idRaw(myKey), idB = concatBytes(peer.x, peer.m);
+    const th = await sha512(concatBytes(
+      L("PQSESSv1-transcript"), idA, idB,
+      pending.eaPub, pending.maPub, pending.ct1, ac.ebPub, ac.ct2, ac.ct3,
+    ));
+    const ikm = concatBytes(k1, k2, k3, dh_ss, dh_ae_b, dh_ee);
+    wipe(k2, k3, dh_ss, dh_ae_b, dh_ee);
+    const ks = await expandRoot(ikm, th); wipe(ikm);
+
+    const expect = await hmac(ks.confirmKey, concatBytes(th, new Uint8Array([0x42])));
+    wipe(ks.root, ks.confirmKey);
+    pendingWipe(pending);                                   // 一次性私钥与 k1 用完即清
+    if (!ctEqual(expect, ac.confirmB)) {
+      wipe(ks.ckA2B, ks.ckB2A);
+      throw new Error("密钥确认失败：对方身份不符或握手被中间人篡改。已中止会话。");
+    }
+    // A 侧：发送链 = A2B，接收链 = B2A
+    const session = buildSession("A", ks.sid, ks.ckA2B, ks.ckB2A);
+    return { session };
+  }
+
+  // 尽力而为的清零：握手暂存与会话链密钥。
+  function pendingWipe(p) {
+    if (!p) return;
+    wipe(p.eaPriv, p.maSecret, p.k1);
+    p.eaPriv = null; p.maSecret = null; p.k1 = null;
+  }
+  function sessionWipe(s) {
+    if (!s) return;
+    wipe(s.ckSend, s.ckRecv, s.sid);
+    for (const v of s.skipped.values()) wipe(v);
+    s.skipped.clear();
+  }
+
+  // ========================================================================
+  //  消息棘轮
+  // ========================================================================
+  function msgHeader(sid, dir, n) {
+    return concatBytes(S_MAGIC, new Uint8Array([T_MSG]), sid, new Uint8Array([dir]), u32be(n));
+  }
+  function parseMsg(buf) {
+    let o = 0;
+    if (buf.length < 8 + 1 + 8 + 1 + 4 || !ctEqual(buf.subarray(0, 8), S_MAGIC)) throw new Error("不是有效的会话消息");
+    o = 8;
+    if (buf[o++] !== T_MSG) throw new Error("这不是会话消息");
+    const sid = buf.subarray(o, o + 8); o += 8;
+    const dir = buf[o++];
+    const n = readU32be(buf, o); o += 4;
+    const header = buf.subarray(0, o);
+    const body = buf.subarray(o);
+    return { sid, dir, n, header, body };
+  }
+
+  async function chainStep(ck) {
+    const mk = await hkdf(ck, SALT0, L("PQSESSv1-mk"), 32);
+    const next = await hkdf(ck, SALT0, L("PQSESSv1-ck"), 32);
+    return { mk, next };
+  }
+
+  async function ratchetEncrypt(session, plaintext) {
+    const n = session.nSend;
+    if (n > 0xfffffff0) throw new Error("发送计数器接近上限，请结束并重新握手。");
+    const { mk, next } = await chainStep(session.ckSend);
+    wipe(session.ckSend); session.ckSend = next;          // 立即弃用并清零旧链密钥
+    const header = msgHeader(session.sid, session.sendDir, n);
+    const body = await encryptStream(mk, header, plaintext);  // AAD = header；逐块认证
+    wipe(mk);
+    session.nSend = n + 1;
+    return concatBytes(header, body);
+  }
+
+  // v2 关键改动（“先验证，后提交”）：
+  // 旧版在 AEAD 认证之前就永久推进接收链、并把沿途密钥塞进无上限的缓存。恶意中继（或任何能
+  // 向信道注入帧的人）只要不停发“序号 +512”的伪造帧，就能让受害者 CPU 空转、缓存无限增长，
+  // 而且认证失败时刚从缓存里取出的真密钥也已被删除，对应的真消息从此永远解不开。
+  // 现在所有链推进都在本地副本上计算，只有 AEAD 认证通过后才提交到 session；缓存总量有上限。
+  async function ratchetDecrypt(session, blob) {
+    const m = parseMsg(blob);
+    if (!ctEqual(m.sid, session.sid)) throw new Error("会话ID不符：该消息不属于本会话。");
+    if (m.dir !== session.recvDir) throw new Error("消息方向错误（疑似把自己发的消息又喂了回来）。");
+
+    let mk, commit, rollback;
+    if (m.n < session.nRecv) {
+      const key = session.recvDir + ":" + m.n;
+      mk = session.skipped.get(key);
+      if (!mk) throw new Error("该消息号已处理过或过旧（疑似重放）。");
+      commit = () => { session.skipped.delete(key); wipe(mk); };
+      rollback = () => {};                                 // 认证失败：密钥留在缓存里，真消息仍可解
+    } else {
+      if (m.n - session.nRecv > MAX_SKIP) throw new Error("消息号跳跃过大，拒绝（防滥用）。");
+      let ck = session.ckRecv; const cached = [], inter = [];
+      for (let i = session.nRecv; i < m.n; i++) {
+        const s = await chainStep(ck);
+        cached.push([session.recvDir + ":" + i, s.mk]);
+        ck = s.next; inter.push(ck);
+      }
+      const step = await chainStep(ck);
+      mk = step.mk;
+      commit = () => {
+        for (const [k, v] of cached) session.skipped.set(k, v);
+        wipe(session.ckRecv, ...inter, mk);
+        session.ckRecv = step.next; session.nRecv = m.n + 1;
+        while (session.skipped.size > MAX_SKIP_TOTAL) {      // 淘汰最旧的缓存密钥
+          const k = session.skipped.keys().next().value;
+          wipe(session.skipped.get(k)); session.skipped.delete(k);
+        }
+      };
+      rollback = () => { for (const [, v] of cached) wipe(v); wipe(...inter, mk, step.next); };
+    }
+    let pt;
+    try {
+      pt = await decryptStream(mk, m.header, m.body);
+    } catch (e) {
+      rollback();
+      throw new Error("认证失败：消息被篡改 / 截断，或会话密钥不符。");
+    }
+    commit();
+    return pt;
+  }
+
+  return {
+    ...core,
+    // 握手
+    sessionInvite, sessionAccept, sessionComplete,
+    // 消息
+    ratchetEncrypt, ratchetDecrypt,
+    // 工具
+    generateKeypair, fingerprint, validatePub, hex, pendingWipe, sessionWipe,
+    // 常量
+    S_MAGIC, T_INVITE, T_ACCEPT, T_MSG, DIR_A2B, DIR_B2A, MAX_SKIP, MAX_SKIP_TOTAL,
+    MLKEM_PK_LEN, MLKEM_CT_LEN, MLKEM_SK_LEN, PUB_ALG,
+  };
+}
+
+/* ============================================================================
+ * 第 3 段 / 3：浏览器接线 · 中继传输 · 界面逻辑
+ *   传输层只搬运不透明密文：服务器永远看不到私钥 / 会话密钥 / 明文。
+ *   端到端协议与无服务器版完全相同；中继仅自动化“复制粘贴”那一步。
+ * ==========================================================================*/
+const NOBLE_URL    = "https://esm.sh/@noble/post-quantum@0.5.4/ml-kem";
+const HASHWASM_URL = "https://esm.sh/hash-wasm@4.12.0";
+const NOBLE_LOCAL    = "./vendor/ml-kem.mjs";     // 由 npm run vendor 生成、server.js 同源提供
+const HASHWASM_LOCAL = "./vendor/hash-wasm.mjs";
+
+const subtle = window.crypto && window.crypto.subtle;
+function randomBytes(n){
+  const out = new Uint8Array(n);
+  for(let o=0;o<n;o+=65536) window.crypto.getRandomValues(out.subarray(o, Math.min(o+65536,n)));
+  return out;
+}
+
+/* v2 算法库加载策略：优先同源 vendor/（部署时用 npm run vendor 固定，服务器会同时把 esm.sh 从
+ * CSP 里移除），只有本地不存在时才退回 esm.sh。运行时从第三方 CDN 加载密码学代码意味着
+ * CDN（或路径上任何能改写它的人）随时可以替换整套实现；本地固定后这条供应链就被切断。 */
+let libSourceWarned = false;
+async function loadLib(localPath, cdnUrl, label){
+  if(location.protocol==="http:" || location.protocol==="https:"){
+    try{
+      const m = await import(new URL(localPath, location.href).href);
+      log(`${label}：已从本站同源 vendor/ 加载（本地固定版本）。`,"ok");
+      return m;
+    }catch{}
+  }
+  const m = await import(cdnUrl);
+  if(!libSourceWarned){
+    libSourceWarned = true;
+    log("⚠ 算法库来自第三方 CDN（esm.sh），未做本地固定：CDN 被替换即等于代码被替换。部署时请执行 npm run vendor 把库固定到同源。","w");
+  }
+  return m;
+}
+
+let nobleKem = null;
+async function ensureNoble(){
+  if(nobleKem) return;
+  const mod = await loadLib(NOBLE_LOCAL, NOBLE_URL, "ML-KEM-1024");
+  const k = mod && mod.ml_kem1024;
+  if(!k || typeof k.keygen!=="function" || typeof k.encapsulate!=="function" || typeof k.decapsulate!=="function")
+    throw new Error("ML-KEM 模块形状不符（不是预期的 @noble/post-quantum 导出）");
+  nobleKem = k;
+  setChip("ch-kem","on");
+}
+const mlkem = {
+  keygen:      ()      => nobleKem.keygen(),
+  encapsulate: (pk)    => nobleKem.encapsulate(pk),
+  decapsulate: (ct,sk) => nobleKem.decapsulate(ct, sk),
+};
+
+let hw = null;
+async function ensureHashWasm(){
+  if(hw) return;
+  const m = await loadLib(HASHWASM_LOCAL, HASHWASM_URL, "Argon2id (hash-wasm)");
+  if(!m || typeof m.argon2id!=="function") throw new Error("hash-wasm 模块形状不符");
+  hw = m;
+}
+async function argon2id({password, salt, iterations, memorySizeKiB, parallelism, hashLen}){
+  await ensureHashWasm();
+  return hw.argon2id({ password, salt, iterations, parallelism,
+    memorySize: memorySizeKiB, hashLength: hashLen, outputType:"binary" });
+}
+
+const pq = createPQSession({ subtle, randomBytes, mlkem, argon2id });
+
+/* ---- 小工具 -------------------------------------------------------------- */
+const dec = new TextDecoder();
+const $ = (id) => document.getElementById(id);
+function log(msg, kind){ const el=$("log"); const t=new Date().toLocaleTimeString();
+  const c = kind==="ok"?"#5be9b9":kind==="w"?"#ffcf6b":kind==="e"?"#ff7a8a":"#9fb0c0";
+  const line=document.createElement("div"); line.style.color=c; line.textContent=`[${t}] ${msg}`;
+  el.appendChild(line); el.scrollTop=el.scrollHeight; }
+const CHIP_LABELS = {
+  "ch-id":   { on:"身份 · 已载入", off:"身份 · 未载入", mid:"身份 · 处理中" },
+  "ch-net":  { on:"中继 · 已连接", off:"中继 · 未连接", mid:"中继 · 连接中" },
+  "ch-peer": { on:"对方 · 已就位", off:"对方 · 未就位", mid:"对方 · 连接中" },
+  "ch-sess": { on:"会话 · 已建立", off:"会话 · 未建立", mid:"会话 · 握手中" },
+};
+function setChip(id, state){ const el=$(id); if(!el) return;
+  el.classList.remove("on","off","mid"); el.classList.add(state);
+  const lab = CHIP_LABELS[id];
+  if(lab && lab[state]){ const t = el.querySelector(".ct"); if(t) t.textContent = lab[state]; }
+}
+function fmtSize(n){ if(n<1024)return n+" B"; if(n<1048576)return (n/1024).toFixed(1)+" KB"; if(n<1073741824)return (n/1048576).toFixed(2)+" MB"; return (n/1073741824).toFixed(2)+" GB"; }
+function download(name, bytes, mime){ const blob=new Blob([bytes],{type:mime||"application/octet-stream"});
+  const u=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=u; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(u),4000); }
+function readBytes(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(new Uint8Array(r.result)); r.onerror=()=>rej(new Error("读取失败")); r.readAsArrayBuffer(file); }); }
+function readText(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(new Error("读取失败")); r.readAsText(file); }); }
+async function copyText(t){ try{ await navigator.clipboard.writeText(t); return true; }catch{ return false; } }
+const toB64 = (b)=>pq.b64encode(b);
+const fromB64 = (s)=>pq.b64decode(s);
+function fail(e){ log((e&&e.message)?e.message:String(e),"e"); }
+function wireDrop(dropId, inputId, onFile){
+  const drop=$(dropId), input=$(inputId);
+  if(!drop) return;
+  if(input) input.addEventListener("change", e=>{ const f=e.target.files&&e.target.files[0]; if(f) onFile(f); input.value=""; });
+  ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.add("drag"); }));
+  ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.remove("drag"); }));
+  drop.addEventListener("drop", e=>{ const f=e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) onFile(f); });
+  drop.addEventListener("click", ()=> input&&input.click());
+}
+
+/* ---- 应用状态 ------------------------------------------------------------ */
+let myIdentity = null;     // {pub, key, fingerprint}
+let peerBundle = null;     // 对方公开身份束 {alg, x25519_pub, mlkem_pub}
+let peerFp     = null;     // 对方指纹（用于带外核对）
+let fpVerified = false;    // 用户是否已确认指纹一致（安全闸门）
+let role       = null;     // "init" | "resp"
+let session    = null;     // 活动会话
+let pendingInvite = null;  // 发起方暂存
+let ws         = null;     // WebSocket
+let room       = null;     // 发给中继的房间号（v2：口令的哈希，不是口令本身）
+let helloSent  = false;    // 是否已发出身份束
+let queuedInvite = null;   // 在确认指纹前到达的 INVITE（字节）
+let ctrSend = 0, ctrRecv = 0;
+
+/* ---- 大文件分块传输（应用层，不改动密码学内核）-----------------------------
+ * 目标：突破“单帧 16 MiB”上限，同时提升安全性。
+ *   • 文件按 XFER_CHUNK 明文分块，每块作为一条独立棘轮消息发送 —— 每块都有
+ *     自己的一次性消息密钥（逐块前向保密），并被 AEAD 独立认证（逐块防篡改）。
+ *   • 中继仍是哑管道：只转发每块不透明密文，看不到明文 / 文件名 / 总大小。
+ *   • 单帧因此很小（约 0.7 MiB），可把服务器 maxPayload 调小以缩小内存型 DoS 面；
+ *     文件总大小不再受单帧限制（仅受双方浏览器内存约束）。
+ *   • 发送端流式读取（file.slice），不把整个文件读进内存；并按 bufferedAmount 背压。
+ *   • 接收端按 transferId 重组，校验块序号 / 去重 / 大小上限，全部到齐才落盘。
+ * 帧格式（棘轮明文内层；纯文本消息仍为无前缀 UTF-8，向后兼容）：
+ *   FSTART = 0x01 'S' | tid(16) | u32 totalChunks | u16 metaLen | metaJSON{name,size,mime}
+ *   FCHUNK = 0x01 'C' | tid(16) | u32 index | <chunk bytes>
+ *   FABORT = 0x01 'A' | tid(16)
+ *   （旧版单条文件 0x01 'F' ':' 仍可接收，便于与未升级的对端互通）
+ * 语音通话帧（同一棘轮信道；详见下方「语音通话」一节）：
+ *   VRING = 0x01 'R' | cid(8) | u16 sampleRate | u8 packetMs      （呼叫请求）
+ *   VACK  = 0x01 'K' | cid(8)                                     （接听）
+ *   VEND  = 0x01 'D' | cid(8) | u8 reason                         （挂断/拒接/忙/…）
+ *   VDATA = 0x01 'V' | cid(8) | u32 seq | i16 pred | u8 idx | adpcm[480]（60ms 音频）
+ * ------------------------------------------------------------------------- */
+const XFER_CHUNK     = 512 * 1024;               // 每块明文大小（512 KiB）
+const XFER_CHUNK_CALL= 64 * 1024;                // 通话期间改用小块，为实时语音让路
+const XFER_MAX_BYTES = 2 * 1024 * 1024 * 1024;   // 单文件重组上限（2 GiB；受浏览器内存制约，可调）
+const XFER_BUF_HI    = 8 * 1024 * 1024;          // 背压阈值：发送缓冲超过即等待
+const XFER_MAXCHUNKS = Math.ceil(XFER_MAX_BYTES / XFER_CHUNK_CALL) + 2;
+const FSTART = 0x53, FCHUNK = 0x43, FABORT = 0x41; // 'S' 'C' 'A'
+const incoming = new Map();                      // tid(hex) -> 进行中的接收状态
+
+const hexId = (b)=>Array.from(b).map(x=>x.toString(16).padStart(2,"0")).join("");
+function bmeta(b, txt){ if(!b) return; const s=b.querySelector(".bubmeta"); if(s) s.textContent=txt; }
+
+// 背压：发送缓冲低于阈值再继续（避免大文件把内存撑爆 / 连接卡死）
+// 通话期间把水位压到 256 KiB：避免语音帧排在数 MiB 文件数据后面（实时性优先于吞吐）。
+function waitBuffer(){
+  const hi = (call && call.state==="active") ? 256*1024 : XFER_BUF_HI;
+  return new Promise((res)=>{
+    if(!ws || ws.readyState!==1 || ws.bufferedAmount<=hi) return res();
+    const iv=setInterval(()=>{
+      if(!ws || ws.readyState!==1 || ws.bufferedAmount<=hi){ clearInterval(iv); res(); }
+    }, 40);
+  });
+}
+
+// 对端给出的文件名不可信：剥掉控制字符、双向覆盖符（可把 exe 伪装成 pdf）、路径分隔符，并限长。
+function safeName(n){
+  n = String(n||"").replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g,"")
+                   .replace(/[\\/:*?"<>|]/g,"_").trim();
+  if(!n || n==="." || n==="..") n = "file";
+  return n.slice(0,180);
+}
+// 由分块重组出 Blob 后触发下载（Blob 可被浏览器落到磁盘，比单个巨型 Uint8Array 省内存）
+function downloadBlobParts(name, parts, mime){
+  const blob = new Blob(parts, { type: mime || "application/octet-stream" });
+  const u = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href=u; a.download=safeName(name)||"download"; a.click();
+  setTimeout(()=>URL.revokeObjectURL(u), 60000);
+}
+
+/* ============================ 语音通话（端到端加密） ============================
+ * 为什么不用 WebRTC：
+ *   • DTLS-SRTP 的密钥交换是经典密码学（非抗量子），与本项目的威胁模型冲突；
+ *   • P2P 会把双方公网 IP 暴露给对端，且需要外部 STUN/TURN 基础设施。
+ * 设计：语音帧复用现有棘轮 —— 每 60ms 音频是一条独立棘轮消息（一次性消息密钥 +
+ * AEAD + 计数器防重放），经哑中继转发；与文字/文件同一套安全模型与抗量子性质。
+ * 抗流量分析：恒定码率 —— 静音（含手动静音）时也持续发送编码后的零样本，
+ * 中继/链路观察者无法从包时序与大小推断「谁在说、何时说」。
+ * 编码：16 kHz 单声道 IMA ADPCM（4 bit/样本 ≈ 64 kbps 明文）；每包头部携带
+ * 编码器状态（pred/idx），因此**逐包独立可解码**，个别包丢失不会让后续解码走样。
+ * 平台约束：getUserMedia 仅在安全上下文（HTTPS / localhost）可用；
+ * AudioWorklet 模块经 blob: URL 装载（CSP script-src 需含 blob:，见 README 论证）。
+ * ------------------------------------------------------------------------- */
+const VC_RATE = 16000, VC_FRAME_MS = 60;
+const VC_SAMPLES = VC_RATE * VC_FRAME_MS / 1000;     // 960 样本/包
+const VC_BYTES = VC_SAMPLES >> 1;                    // 480 字节 ADPCM/包
+const VC_RING_MS = 45000;                            // 呼叫/来电超时
+const VC_PREBUF = 2;                                 // 播放前预存 2 包（~120ms 抖动缓冲）
+const VC_BACKLOG_S = 0.6;                            // 播放积压上限（超出丢最旧，限制延迟漂移）
+const VRING = 0x52, VACK = 0x4B, VEND = 0x44, VDATA = 0x56;   // 'R' 'K' 'D' 'V'
+const VC_REASON = { 0:"对方已挂断", 1:"对方拒接", 2:"对方正忙", 3:"对方出错", 4:"呼叫超时", 5:"对方不支持" };
+
+let call = null;                       // 当前通话状态（同一时刻最多一通）
+const vcStrayEnd = new Map();          // idHex -> 上次对“幽灵通话”回送 VEND 的时间（限频用）
+
+/* ---- 棘轮互斥（关键修复）---------------------------------------------------
+ * ratchetEncrypt / ratchetDecrypt 都会在 await 期间读写会话链状态（链密钥与计数器）。
+ * 一旦并发调用 —— 例如通话中语音帧与文字/文件同时加密，或一阵语音包到达后同时解密 ——
+ * 链状态就会交错损坏：表现为「通话几秒后没声音、挂断帧解不开（对方一直显示通话中）、
+ * 此后所有消息认证失败（信息发不过去）」。
+ * 因此：发送侧一律经 sendSecure 串行（加密 + 发出原子成序，计数器与线序一致）；
+ * 接收侧经 recvMsg 队列按到达顺序逐条解密。任何新代码都不得绕过这两个入口。 */
+let txChain = Promise.resolve();
+function sendSecure(plainBytes){
+  const p = txChain.then(async ()=>{
+    if(!session || !ws || ws.readyState!==1) return false;
+    const blob = await pq.ratchetEncrypt(session, plainBytes);
+    if(!(await netSendKind(KIND_MSG, blob))) return false;   // 加密期间连接断开：弃发（对端棘轮可跳号，无碍）
+    ctrSend++; $("ctrSend").textContent = String(ctrSend);
+    return true;
+  });
+  txChain = p.then(()=>{}, ()=>{});              // 链上不积累错误，单次失败不卡死后续发送
+  return p;                                      // 调用方可 await 拿到本次是否真正发出
+}
+
+/* ---- IMA ADPCM 编解码（无依赖，约 60 行，便于审计）---- */
+const ADPCM_STEPS = new Int16Array([7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,
+  50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,230,253,279,307,337,371,408,449,494,
+  544,598,658,724,796,876,963,1060,1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,
+  3660,4026,4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,15289,16818,
+  18500,20350,22385,24623,27086,29794,32767]);
+const ADPCM_IDX = new Int8Array([-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8]);
+function adpcmEncode(pcm, st){          // pcm: Int16Array（偶数长度）；st:{pred,idx} 会被推进
+  const out = new Uint8Array(pcm.length >> 1);
+  let pred = st.pred, idx = st.idx;
+  for(let i=0;i<pcm.length;i++){
+    const step = ADPCM_STEPS[idx];
+    let diff = pcm[i] - pred, sign = 0;
+    if(diff < 0){ sign = 8; diff = -diff; }
+    let code = 0, vp = step >> 3;
+    if(diff >= step){ code = 4; diff -= step; vp += step; }
+    if(diff >= (step>>1)){ code |= 2; diff -= step>>1; vp += step>>1; }
+    if(diff >= (step>>2)){ code |= 1; vp += step>>2; }
+    pred += sign ? -vp : vp;
+    pred = pred > 32767 ? 32767 : pred < -32768 ? -32768 : pred;
+    idx += ADPCM_IDX[code | sign]; idx = idx < 0 ? 0 : idx > 88 ? 88 : idx;
+    const nib = (code | sign) & 0xF;
+    if(i & 1) out[i>>1] |= nib << 4; else out[i>>1] = nib;
+  }
+  st.pred = pred; st.idx = idx;
+  return out;
+}
+function adpcmDecode(bytes, pred, idx){
+  const out = new Int16Array(bytes.length << 1);
+  for(let i=0;i<out.length;i++){
+    const nib = (i & 1) ? (bytes[i>>1] >> 4) : (bytes[i>>1] & 0xF);
+    const step = ADPCM_STEPS[idx];
+    let vp = step >> 3;
+    if(nib & 4) vp += step;
+    if(nib & 2) vp += step >> 1;
+    if(nib & 1) vp += step >> 2;
+    pred += (nib & 8) ? -vp : vp;
+    pred = pred > 32767 ? 32767 : pred < -32768 ? -32768 : pred;
+    idx += ADPCM_IDX[nib]; idx = idx < 0 ? 0 : idx > 88 ? 88 : idx;
+    out[i] = pred;
+  }
+  return out;
+}
+
+/* ---- 流式线性重采样（采集 ctxRate→16k；播放 16k→ctxRate）---- */
+function makeResampler(inRate, outRate){
+  const step = inRate / outRate;
+  let prev = 0, t = 0;                 // t=0 即上一块最后一个样本的位置
+  return (inp)=>{
+    const n = inp.length, out = [];
+    while(t < n){
+      const i = Math.floor(t), frac = t - i;
+      const a = i === 0 ? prev : inp[i-1];
+      out.push(a + (inp[i] - a) * frac);
+      t += step;
+    }
+    t -= n; prev = inp[n-1];
+    return Float32Array.from(out);
+  };
+}
+function vcF32toI16(f){ const o=new Int16Array(f.length); for(let i=0;i<f.length;i++){ let s=f[i]; s=s<-1?-1:s>1?1:s; o[i]=(s*32767)|0; } return o; }
+function vcI16toF32(a){ const o=new Float32Array(a.length); for(let i=0;i<a.length;i++) o[i]=a[i]/32768; return o; }
+function vcFifo(){
+  const q=[]; let n=0;
+  return {
+    push(a){ q.push(a); n+=a.length; },
+    pull(want){
+      if(n<want) return null;
+      const out=new Float32Array(want); let off=0;
+      while(off<want){
+        const h=q[0], take=Math.min(want-off, h.length);
+        out.set(h.subarray(0,take), off); off+=take;
+        if(take===h.length) q.shift(); else q[0]=h.subarray(take);
+      }
+      n-=want; return out;
+    },
+  };
+}
+
+/* ---- AudioWorklet（采集打包 / 播放抖动缓冲），经 blob: 装载 ---- */
+const VC_WORKLET_SRC = `
+class VCCap extends AudioWorkletProcessor{
+  constructor(){ super(); this.buf=new Float32Array(2048); this.n=0; }
+  process(inputs, outputs){
+    const ch = inputs[0] && inputs[0][0];
+    if(ch){
+      let i=0;
+      while(i<ch.length){
+        const m = Math.min(ch.length-i, this.buf.length-this.n);
+        this.buf.set(ch.subarray(i,i+m), this.n); this.n+=m; i+=m;
+        if(this.n===this.buf.length){ this.port.postMessage(this.buf.slice(0)); this.n=0; }
+      }
+    }
+    return true; // 输出保持静音（外接 gain=0 仅为确保节点被渲染图拉取）
+  }
+}
+registerProcessor('vc-cap', VCCap);
+class VCPlay extends AudioWorkletProcessor{
+  constructor(){
+    super(); this.q=[]; this.off=0; this.total=0;
+    this.cap = Math.floor(sampleRate * ${VC_BACKLOG_S});
+    this.port.onmessage = (e)=>{
+      const a=e.data; this.q.push(a); this.total+=a.length;
+      while((this.total - this.off) > this.cap && this.q.length > 1){
+        const d=this.q.shift(); this.total-=d.length; this.off=0;   // 积压过深：丢最旧，钳住延迟
+      }
+    };
+  }
+  process(_, outputs){
+    const o = outputs[0]; const out = o && o[0]; if(!out) return true;
+    let i=0;
+    while(i<out.length && this.q.length){
+      const h=this.q[0], m=Math.min(out.length-i, h.length-this.off);
+      out.set(h.subarray(this.off,this.off+m), i); i+=m; this.off+=m;
+      if(this.off>=h.length){ this.total-=h.length; this.q.shift(); this.off=0; }
+    }
+    for(;i<out.length;i++) out[i]=0;          // 欠载：补零（短暂静音）
+    for(let c=1;c<o.length;c++) o[c].set(out);
+    return true;
+  }
+}
+registerProcessor('vc-play', VCPlay);
+`;
+
+/* ---- 帧收发 ---- */
+function vcSendRaw(type, idB, body){
+  const f = pq.concatBytes(new Uint8Array([0x01, type]), idB, body || new Uint8Array(0));
+  return sendSecure(f).catch(()=>{});            // 语音帧尽力而为；与文字/文件同走串行棘轮
+}
+
+function vcStaleErr(){ const e = new Error("通话已结束"); e.name = "VCStale"; return e; }
+function vcMicErrMsg(e){
+  const n = e && e.name;
+  if(n==="NotAllowedError" || n==="PermissionDeniedError" || n==="SecurityError")
+    return "麦克风权限被拒绝。浏览器会记住这个选择：请点击地址栏左侧的 🔒/权限图标，把「麦克风」改回「允许」（或在浏览器设置·网站权限中修改），然后重新发起/接听通话。";
+  if(n==="NotFoundError" || n==="DevicesNotFoundError" || n==="OverconstrainedError")
+    return "未检测到可用的麦克风设备。请确认麦克风已接好并在系统中启用后重试。";
+  if(n==="NotReadableError" || n==="TrackStartError" || n==="AbortError")
+    return "麦克风正被其他应用占用或无法启动。请关闭占用麦克风的程序后重试。";
+  return "无法打开麦克风：" + (e && e.message || e);
+}
+
+async function vcAudioUp(c){
+  // 资源逐项挂到 c 上：任一步失败/中途取消，vcCleanAudio(c) 都能完整回收。
+  // （修复：权限被拒时 AudioContext 曾经泄漏 —— 多次累积会触达浏览器的上下文数量
+  //   上限，导致之后即便授权了也建不起音频、通话无声。）
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  c.ctx = ctx;
+  try{ await ctx.resume(); }catch{}              // 仍在用户手势栈内创建并恢复（Safari 要求）
+  c.mic = await navigator.mediaDevices.getUserMedia({   // 先要权限：弹窗尽早出现
+    audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 },
+  });
+  if(call !== c) throw vcStaleErr();             // 等待授权期间通话已被取消/超时/会话重置
+  const burl = URL.createObjectURL(new Blob([VC_WORKLET_SRC], { type:"text/javascript" }));
+  try{ await ctx.audioWorklet.addModule(burl); } finally { URL.revokeObjectURL(burl); }
+  if(call !== c) throw vcStaleErr();
+  const src = ctx.createMediaStreamSource(c.mic);
+  const cap = new AudioWorkletNode(ctx, "vc-cap");
+  const sink = ctx.createGain(); sink.gain.value = 0;          // 静音锚点：确保采集节点被拉取
+  const play = new AudioWorkletNode(ctx, "vc-play", { numberOfInputs:0, numberOfOutputs:1, outputChannelCount:[1] });
+  src.connect(cap); cap.connect(sink); sink.connect(ctx.destination);
+  play.connect(ctx.destination);
+  Object.assign(c, {
+    src, cap, sink, play,
+    rsUp: makeResampler(ctx.sampleRate, VC_RATE),
+    rsDn: makeResampler(VC_RATE, ctx.sampleRate),
+    fifo: vcFifo(), enc:{ pred:0, idx:0 }, seq:0, pre:[], flow:false,
+  });
+  cap.port.onmessage = (e)=>vcOnCapture(e.data);
+}
+function vcCleanAudio(c){
+  try{ c.mic && c.mic.getTracks().forEach(t=>t.stop()); }catch{}
+  try{ c.cap && (c.cap.port.onmessage=null, c.cap.disconnect()); }catch{}
+  try{ c.src && c.src.disconnect(); }catch{}
+  try{ c.sink && c.sink.disconnect(); }catch{}
+  try{ c.play && c.play.disconnect(); }catch{}
+  try{ c.ctx && c.ctx.close(); }catch{}
+}
+
+function vcOnCapture(f32){
+  if(!call || call.state!=="active" || !call.fifo) return;
+  if(!ws || ws.readyState!==1){ vcTeardown("中继连接断开，通话已结束。","e"); return; }
+  if(call.muted) f32.fill(0);                  // 静音也照常编码发送：恒定码率，抗流量分析
+  call.fifo.push(call.rsUp(f32));
+  let pcm;
+  while((pcm = call.fifo.pull(VC_SAMPLES))){
+    const pred0 = call.enc.pred, idx0 = call.enc.idx;          // 包头携带编码前状态 → 逐包独立可解码
+    const bytes = adpcmEncode(vcF32toI16(pcm), call.enc);
+    const body = pq.concatBytes(u32be(call.seq++), u16be(pred0 & 0xffff), new Uint8Array([idx0]), bytes);
+    vcSendRaw(VDATA, call.idB, body);
+  }
+}
+function vcPlayOut(f32){
+  if(!call || !call.play) return;
+  if(!call.flow){                              // 预存几包再开播：吸收网络抖动
+    call.pre.push(f32);
+    if(call.pre.length >= VC_PREBUF){
+      for(const a of call.pre) call.play.port.postMessage(a, [a.buffer]);
+      call.pre.length = 0; call.flow = true;
+    }
+    return;
+  }
+  call.play.port.postMessage(f32, [f32.buffer]);
+}
+
+/* ---- 状态机与 UI ---- */
+function vcDur(t0){ const s=Math.max(0,Math.floor((Date.now()-t0)/1000)); return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); }
+function vcUi(){
+  const bar=$("callBar"); if(!bar) return;
+  const show=(id,on)=>$(id).classList.toggle("hide", !on);
+  bar.classList.toggle("live", !!(call && call.state==="active"));
+  bar.classList.toggle("ringing", !!(call && (call.state==="ring" || call.state==="ring-in" || call.state==="prep")));
+  $("callBtn").disabled = !session || !!call;
+  show("callAccept", !!(call && call.state==="ring-in"));
+  show("callDecline", !!(call && call.state==="ring-in"));
+  show("callMute", !!(call && call.state==="active"));
+  show("callEnd", !!(call && (call.state==="active" || call.state==="ring" || call.state==="prep")));
+  $("callEnd").textContent = (call && call.state==="active") ? "⏹ 挂断" : "✕ 取消";
+  $("callMute").textContent = (call && call.muted) ? "🎙 取消静音" : "🔇 静音";
+  const st=$("callState");
+  if(!call) st.textContent = "端到端加密 · 恒定码率抗流量分析（需 HTTPS 与麦克风权限，建议佩戴耳机）";
+  else if(call.state==="prep") st.textContent = "正在开启麦克风…（如浏览器弹出权限请求，请选择「允许」）";
+  else if(call.state==="ring") st.textContent = "正在呼叫对方…";
+  else if(call.state==="ring-in") st.textContent = "📞 对方邀请你语音通话";
+  else st.textContent = "🎤 通话中 "+vcDur(call.t0)+"（麦克风已开启，静音也保持恒定码率）";
+}
+function vcGoActive(){
+  call.state = "active"; call.t0 = Date.now();
+  call.tick = setInterval(()=>{ if(!call) return; vcUi(); if(call.bub) bmeta(call.bub, "通话中 · "+vcDur(call.t0)); }, 1000);
+  if(call.bub) bmeta(call.bub, "通话中…");
+  vcUi();
+  log("✓ 语音通话已建立（逐包前向保密 · 恒定码率）。","ok");
+}
+function vcTeardown(msg, lvl, meta){
+  const c = call; call = null;
+  if(c){
+    clearTimeout(c.ringT); clearInterval(c.tick);
+    vcCleanAudio(c);
+    if(c.bub) bmeta(c.bub, meta || (c.t0 ? "已结束 · 时长 "+vcDur(c.t0) : "已结束"));
+  }
+  vcUi();
+  if(msg) log(msg, lvl || "w");
+}
+
+async function vcStart(){
+  if(!session) return log("会话尚未建立。","w");
+  if(call) return;
+  if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia))
+    return log("此环境无法使用麦克风：语音通话需要 HTTPS（或 localhost）。","e");
+  const idB = randomBytes(8);
+  const c = call = { idB, idHex: hexId(idB), dir:"out", state:"prep", muted:false };
+  vcUi();
+  try{ await vcAudioUp(c); }
+  catch(e){
+    if(call===c) call=null;
+    vcCleanAudio(c); vcUi();
+    if(!(e && e.name==="VCStale")) log(vcMicErrMsg(e),"e");   // 取消/超时导致的中断不必报错
+    return;
+  }
+  if(call!==c){ vcCleanAudio(c); return; }       // 等待期间会话被重置 / 通话被取消
+  c.state = "ring";
+  c.bub = bubble("me","📞 语音呼叫","等待对方接听…");
+  vcSendRaw(VRING, idB, pq.concatBytes(u16be(VC_RATE), new Uint8Array([VC_FRAME_MS])));
+  c.ringT = setTimeout(()=>{ if(call===c && c.state==="ring"){ vcSendRaw(VEND, c.idB, new Uint8Array([4])); vcTeardown("对方未接听。","w","未接听"); } }, VC_RING_MS);
+  vcUi();
+}
+async function vcAccept(){
+  if(!call || call.state!=="ring-in") return;
+  if(!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)){
+    vcSendRaw(VEND, call.idB, new Uint8Array([5]));
+    return vcTeardown("此环境无法使用麦克风（需要 HTTPS 或 localhost）。","e","无法接听");
+  }
+  clearTimeout(call.ringT);
+  const c = call;
+  c.state = "prep"; vcUi();                      // 立刻离开 ring-in：防止重复点「接听」二次开麦
+  try{ await vcAudioUp(c); }
+  catch(e){
+    if(e && e.name==="VCStale"){ vcCleanAudio(c); return; }   // 等待授权期间对方已取消/超时
+    if(call===c){
+      vcSendRaw(VEND, c.idB, new Uint8Array([3]));
+      vcTeardown(vcMicErrMsg(e),"e","无法接听");
+    }else{
+      vcCleanAudio(c);
+    }
+    return;
+  }
+  if(call!==c){ vcCleanAudio(c); return; }
+  vcSendRaw(VACK, c.idB);
+  vcGoActive();
+}
+
+function vcOnFrame(pt){
+  const type = pt[1];
+  const idB = pt.slice(2,10), idHex = hexId(idB);
+  if(type===VRING){
+    const rate = pt.length>=12 ? readU16be(pt,10) : 0;
+    if(call){ if(call.idHex!==idHex) vcSendRaw(VEND, idB, new Uint8Array([2])); return; }   // 忙
+    if(rate!==VC_RATE){ vcSendRaw(VEND, idB, new Uint8Array([5])); return; }
+    call = { idB, idHex, dir:"in", state:"ring-in", muted:false,
+             bub: bubble("peer","📞 语音来电","等待你接听…") };
+    call.ringT = setTimeout(()=>{ if(call && call.idHex===idHex && call.state==="ring-in"){ vcSendRaw(VEND, idB, new Uint8Array([4])); vcTeardown("来电超时未接听。","w","未接听"); } }, VC_RING_MS);
+    vcUi(); gotoTab("chat");
+    log("收到语音通话请求（接听需要麦克风权限）。","w");
+    return;
+  }
+  if(!call || call.idHex!==idHex){
+    // 自愈「幽灵通话」：若对方还在向一个本端已不存在的通话发语音/接听帧（例如挂断帧
+    // 曾因链路/状态异常未送达），回送一次 VEND 让对方结束界面上残留的“通话中”。
+    // 只回应 VDATA / VACK，绝不回应 VEND（避免两端互相应答成环），并按通话 ID 限频。
+    if(type===VDATA || type===VACK){
+      const now = Date.now();
+      if(now - (vcStrayEnd.get(idHex) || 0) > 2000){
+        vcStrayEnd.set(idHex, now);
+        if(vcStrayEnd.size > 32) vcStrayEnd.delete(vcStrayEnd.keys().next().value);
+        vcSendRaw(VEND, idB, new Uint8Array([0]));
+      }
+    }
+    return;                                      // 与当前通话无关的帧：不再处理
+  }
+  if(type===VACK){
+    if(call.dir==="out" && call.state==="ring"){ clearTimeout(call.ringT); vcGoActive(); }
+    return;
+  }
+  if(type===VEND){
+    const r = pt.length>=11 ? pt[10] : 0;
+    vcTeardown((VC_REASON[r] || "通话已结束")+"。","w", VC_REASON[r] || "已结束");
+    return;
+  }
+  if(type===VDATA){
+    if(call.state!=="active" || pt.length!==17+VC_BYTES) return;
+    const pu = readU16be(pt,14);
+    const pred = pu>=0x8000 ? pu-0x10000 : pu;
+    const idx = Math.min(88, pt[16]);
+    const f32 = call.rsDn(vcI16toF32(adpcmDecode(pt.subarray(17), pred, idx)));
+    vcPlayOut(f32);
+    return;
+  }
+}
+
+$("callBtn").addEventListener("click", ()=>{ vcStart(); });
+$("callAccept").addEventListener("click", ()=>{ vcAccept(); });
+$("callDecline").addEventListener("click", ()=>{
+  if(call && call.state==="ring-in"){ vcSendRaw(VEND, call.idB, new Uint8Array([1])); vcTeardown("已拒接来电。","ok","已拒接"); }
+});
+$("callMute").addEventListener("click", ()=>{ if(call && call.state==="active"){ call.muted=!call.muted; vcUi(); } });
+$("callEnd").addEventListener("click", ()=>{
+  if(!call) return;
+  const reason = call.t0 ? 0 : (call.dir==="in" ? 1 : 0);   // 未接通的来电按「拒接」告知对方
+  const meta = call.t0 ? "已结束 · 时长 "+vcDur(call.t0) : "已取消";
+  vcSendRaw(VEND, call.idB, new Uint8Array([reason]));
+  vcTeardown(call.t0 ? "通话已结束。" : "已取消。","ok", meta);
+});
+
+/* ---- 标签页导航 ---------------------------------------------------------- */
+function gotoTab(name){
+  document.querySelectorAll("[data-tab]").forEach(b=>b.classList.toggle("active", b.dataset.tab===name));
+  document.querySelectorAll("[data-panel]").forEach(p=>p.classList.toggle("active", p.dataset.panel===name));
+}
+document.querySelectorAll("[data-tab]").forEach(b=> b.addEventListener("click", ()=>gotoTab(b.dataset.tab)) );
+
+/* ---- 状态刷新 ------------------------------------------------------------ */
+function refreshStatus(){
+  if(myIdentity){ setChip("ch-id","on"); $("idState").textContent="已就绪 · 指纹 "+myIdentity.fingerprint; }
+  else { setChip("ch-id","off"); $("idState").textContent="未生成"; }
+  // 我方指纹回显（供对方核对）
+  if(myIdentity) $("myFpShow").textContent = myIdentity.fingerprint;
+}
+
+/* =====================  ① 身份  ===================== */
+$("genBtn").addEventListener("click", async ()=>{
+  try{
+    log("加载 ML-KEM-1024 (noble)…"); await ensureNoble();
+    log("生成身份密钥…");
+    const kp = await pq.generateKeypair();
+    myIdentity = kp;
+    $("idFp").textContent = kp.fingerprint;
+    $("pubPeek").value = JSON.stringify(kp.pub,null,2);
+    $("idRes").classList.add("show");
+    log("身份已生成。请把指纹通过可信渠道（当面 / 电话）告知对方核对。","ok");
+    refreshStatus();
+    await trustInit();
+  }catch(e){ fail(e); }
+});
+
+$("dlPub").addEventListener("click", ()=>{
+  if(!myIdentity) return log("请先生成或载入身份。","w");
+  download("identity.pub", enc.encode(JSON.stringify(myIdentity.pub,null,2)), "application/json");
+});
+
+$("idFpCopy").addEventListener("click", async ()=>{
+  if(!myIdentity) return log("请先生成或载入身份。","w");
+  log((await copyText(myIdentity.fingerprint)) ? "指纹已复制到剪贴板（只用于你自己留存；对方核对时仍需你逐组读给对方听）。" : "复制失败，请手动选择复制。", "ok");
+});
+
+$("dlKey").addEventListener("click", async ()=>{
+  if(!myIdentity) return log("请先生成或载入身份。","w");
+  try{
+    const pw = $("keyPw").value;
+    if(pw && pw.length < 8){ return log("私钥导出口令过短（至少 8 位）。Argon2id 能拖慢猜解，但挡不住过短口令。","w"); }
+    if(!pw && !confirm("将导出【未加密】的私钥文件 identity.key。任何拿到该文件的人都能冒充你并解密你的会话。确定继续？")) return;
+    if(pw){
+      log("用 Argon2id 加密私钥…"); await ensureHashWasm();
+      const plain = enc.encode(JSON.stringify(myIdentity.key));
+      const blob = await pq.encryptPassword(pw, plain);   // 输出含 PQFCRYPT 头
+      download("identity.pqkey", blob, "application/octet-stream");
+      log("已导出口令加密私钥 identity.pqkey。","ok");
+    }else{
+      download("identity.key", enc.encode(JSON.stringify(myIdentity.key,null,2)), "application/json");
+      log("已导出明文私钥 identity.key（请妥善保管）。","w");
+    }
+  }catch(e){ fail(e); }
+});
+
+// 页内遮罩式口令输入（替代 window.prompt：prompt 会把口令明文显示在对话框里，且易被误认为浏览器弹窗）
+function askPassword(title){
+  return new Promise((res)=>{
+    const box=$("pwBox"), inp=$("pwIn");
+    $("pwTitle").textContent = title; inp.value=""; box.classList.add("show"); inp.focus();
+    const done=(v)=>{ box.classList.remove("show"); inp.value=""; $("pwOk").onclick=null; $("pwCancel").onclick=null; inp.onkeydown=null; res(v); };
+    $("pwOk").onclick=()=>done(inp.value);
+    $("pwCancel").onclick=()=>done(null);
+    inp.onkeydown=(e)=>{ if(e.key==="Enter"){ e.preventDefault(); done(inp.value); } else if(e.key==="Escape"){ done(null); } };
+  });
+}
+
+wireDrop("idDrop","idFile", async (f)=>{
+  try{
+    if(f.size > 64*1024) throw new Error("文件过大，不像是身份私钥文件。");
+    const bytes = await readBytes(f);
+    const isEnc = bytes.length>8 && bytes[0]===0x50 && bytes[1]===0x51 && bytes[2]===0x46 && bytes[3]===0x43; // PQFC
+    let keyObj;
+    if(isEnc){
+      const pw = await askPassword("该私钥文件已用口令加密，请输入口令：");
+      if(pw===null) return;
+      log("用 Argon2id 解密私钥…"); await ensureHashWasm();
+      const { plaintext } = await pq.decrypt(bytes, { password: pw });
+      keyObj = JSON.parse(dec.decode(plaintext)); pq.wipe(plaintext);
+    }else{
+      keyObj = JSON.parse(dec.decode(bytes));
+    }
+    if(!keyObj || typeof keyObj!=="object") throw new Error("这不是有效的身份私钥文件");
+    for(const k of ["x25519_pub","mlkem_pub","x25519_priv","mlkem_secret"]) if(typeof keyObj[k]!=="string") throw new Error("这不是有效的身份私钥文件（缺少 "+k+"）");
+    if(keyObj.alg===undefined) keyObj.alg = pq.PUB_ALG;
+    const pub = { alg:keyObj.alg, x25519_pub:keyObj.x25519_pub, mlkem_pub:keyObj.mlkem_pub };
+    const { x:xp, m:mp } = pq.validatePub(pub);
+    const xs = fromB64(keyObj.x25519_priv), ms = fromB64(keyObj.mlkem_secret);
+    const okLen = xs.length===32 && ms.length===pq.MLKEM_SK_LEN;
+    pq.wipe(xs, ms);
+    if(!okLen) throw new Error("身份私钥文件中的密钥长度不正确");
+    const fp = await pq.fingerprint(xp, mp);
+    myIdentity = { key:keyObj, pub, fingerprint:fp };
+    $("idFp").textContent = fp;
+    $("pubPeek").value = JSON.stringify(myIdentity.pub,null,2);
+    $("idRes").classList.add("show");
+    $("idDropT").textContent = "已载入身份 · 指纹 "+fp;
+    log("身份已载入。","ok");
+    refreshStatus();
+    await trustInit();
+  }catch(e){ fail(e); }
+});
+
+/* =====================  ② 连接 ===================== */
+// 默认中继地址：与本页同源（推荐由中继服务器直接托管本页）
+(function deriveDefaultUrl(){
+  try{
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    if(location.host) $("srvUrl").value = `${proto}//${location.host}`;
+  }catch{}
+})();
+
+// 随机房间口令：31 个不易混淆的字符；拒绝采样消除取模偏差（旧版 r[i] % 31 有偏），10 位约 49.5 bit。
+function randomRoom(len=10){
+  const al = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let out = "";
+  while(out.length < len){
+    const r = randomBytes(32);
+    for(const b of r){ if(b < 248 && out.length < len) out += al[b % al.length]; }   // 248 = 8 x 31：均匀映射
+  }
+  return out;
+}
+$("roomGen").addEventListener("click", ()=>{ $("roomCode").value = randomRoom(); });
+
+/* ---- 房间层（v2）：房间口令 → Argon2id → 信令密钥；中继只拿到口令的哈希 ------------------
+ * 旧版把房间号明文发给中继，并把双方身份公钥明文经中继交换：中继因此能长期记录
+ * “谁（长期公钥）在何时与谁通话”，还能随意注入 hello / invite / accept 帧尝试中间人。
+ * v2 把所有应用层信令（hello / invite / accept / msg / bye）先包进一层 AES-256-GCM 信封：
+ *   密钥   = Argon2id(口令, salt = SHA-256("pqsession-room-salt-v2" || 口令)[0:16], 64 MiB, t=3)
+ *   房间号 = hex(SHA-256("pqsession-room-id-v2" || 口令))[0:32]      （发给中继的只有这个）
+ *   明文   = 本端随机标签(8) || 计数器(u32) || 类型(u8) || 载荷；AAD = "PQSESS-room-v2"
+ * 效果：不知道口令的中继看不到身份公钥、也伪造不出任何信令帧；标签用于丢弃被反射回来的
+ * 自己的帧，计数器用于丢弃重放。会话内容本身仍由棘轮加密，这层只是额外的信封：
+ * 口令被猜中最多暴露身份公钥（回到旧版的状态），聊天内容不受影响。 */
+const ROOM_AAD = L("PQSESS-room-v2");
+const KIND_HELLO=1, KIND_INVITE=2, KIND_ACCEPT=3, KIND_MSG=4, KIND_BYE=5;
+const ROOM_MAX_ENV = 6*1024*1024;              // 单条信令密文 base64 上限（与中继单帧上限相称）
+let roomCtx = null;                            // { id, key, tag, tagHex, ctr, seen }
+
+function normalizeRoomCode(v){ return String(v||"").normalize("NFKC").replace(/[\s\-_]/g,"").toUpperCase(); }
+
+async function deriveRoom(code){
+  await ensureHashWasm();
+  const codeBytes = enc.encode(code);
+  const idDigest   = new Uint8Array(await subtle.digest("SHA-256", pq.concatBytes(L("pqsession-room-id-v2"), codeBytes)));
+  const saltDigest = new Uint8Array(await subtle.digest("SHA-256", pq.concatBytes(L("pqsession-room-salt-v2"), codeBytes)));
+  const raw = await argon2id({ password: codeBytes, salt: saltDigest.subarray(0,16),
+    iterations: ARGON_TIME, memorySizeKiB: ARGON_MEM_KIB, parallelism: 1, hashLen: 32 });
+  const key = await subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt","decrypt"]);
+  pq.wipe(raw, codeBytes);
+  const tag = randomBytes(8);
+  return { id: hexId(idDigest.subarray(0,16)), key, tag, tagHex: hexId(tag), ctr: 0, seen: new Map() };
+}
+
+async function sealKind(kind, payload){
+  const r = roomCtx; if(!r) throw new Error("房间密钥尚未派生");
+  if(r.ctr >= 0xffffffff) throw new Error("信令计数器耗尽，请重新连接。");
+  const pt = pq.concatBytes(r.tag, u32be(r.ctr++), new Uint8Array([kind]), payload || new Uint8Array(0));
+  const nonce = randomBytes(12);
+  const ct = new Uint8Array(await subtle.encrypt({ name:"AES-GCM", iv:nonce, additionalData:ROOM_AAD, tagLength:128 }, r.key, pt));
+  pq.wipe(pt);
+  return { v:2, n:toB64(nonce), c:toB64(ct) };
+}
+
+async function unsealKind(d){
+  const r = roomCtx; if(!r) return null;
+  if(!d || d.v!==2 || typeof d.n!=="string" || typeof d.c!=="string" || d.n.length>24 || d.c.length>ROOM_MAX_ENV)
+    throw new Error("信令帧格式无效（对方可能在用旧版本页面）。");
+  const nonce = fromB64(d.n), ct = fromB64(d.c);
+  if(nonce.length!==12 || ct.length < 16+8+4+1) throw new Error("信令帧长度无效。");
+  let pt;
+  try{ pt = new Uint8Array(await subtle.decrypt({ name:"AES-GCM", iv:nonce, additionalData:ROOM_AAD, tagLength:128 }, r.key, ct)); }
+  catch{ throw new Error("信令帧认证失败：对方的房间口令与你的不一致，或中继注入了伪造帧。"); }
+  const tagHex = hexId(pt.subarray(0,8));
+  if(tagHex===r.tagHex) return null;                          // 中继把我自己的帧反射回来：忽略
+  const ctr = readU32be(pt,8);
+  const last = r.seen.get(tagHex);
+  if(last!==undefined && ctr<=last) throw new Error("信令帧计数器倒退（疑似重放），已丢弃。");
+  if(last===undefined && r.seen.size>=8) r.seen.delete(r.seen.keys().next().value);
+  r.seen.set(tagHex, ctr);
+  return { kind: pt[12], payload: pt.subarray(13), tagHex };
+}
+
+// 发送一条加密信令；返回是否真的发出
+async function netSendKind(kind, payload){
+  if(!ws || ws.readyState!==1 || !roomCtx) return false;
+  const d = await sealKind(kind, payload);
+  if(!ws || ws.readyState!==1) return false;
+  ws.send(JSON.stringify({ t:"sig", d }));
+  return true;
+}
+
+/* ---- 信任存储（v2.1）：记住核对过的指纹（类似 SSH known_hosts 与 Signal 的安全码变更提示）------
+ * 只存指纹、你起的名字与“房间口令哈希 → 上次对方指纹”，不存任何密钥。作用有四个：
+ *   1. 同一指纹再次出现时自动通过核对，消除“每次都要重新核对”的疲劳（疲劳会让人乱点确认）；
+ *   2. 出现新指纹而你在等的是已核对过的人时，页面明确提醒“这不是你核对过的那个人”；
+ *   3. 给新指纹起的名字若与已有联系人重名，视为“密钥变更”，要求二次确认并把旧指纹记入历史；
+ *   4. 同一房间口令下对方指纹与上次不同，红色告警（不依赖你有没有起名字）。
+ * 存储：JSON 用 AES-256-GCM 加密后写入本源 localStorage。密钥 = HKDF-SHA-256(本方 X25519 身份私钥,
+ *   salt = SHA-256(标签 || 本方身份公钥), info = 固定标签)；命名空间 = SHA-256(标签 || 本方身份公钥) 前 128 位。
+ *   没有载入同一份身份文件就解不开：浏览器配置被拷走只拿到密文（名字是其中最敏感的部分）；
+ *   每个身份各有一份列表。无法持久化的环境（隐私模式、预览沙箱）自动退回内存模式。
+ * 连接中途被替换出现的指纹即使在列表里也不自动通过（异常流程，要求手动确认）。 */
+const TRUST_KEY = "pqsession.trust.v1";           // localStorage 键前缀：<前缀>.<身份命名空间>
+const TRUST_MAX = 500;
+const FP_RE = /^([0-9a-f]{4} ){15}[0-9a-f]{4}$/;
+const TRUST_AAD = "pqsession-truststore-v1";
+function makeTrustStore(backend, nowFn){
+  // backend：null = 内存模式；否则 { read(): Promise<string|null|false>, write(text): Promise<void>, remove() }
+  //   read 返回 false 表示“存了但解不开”（损坏 / 被篡改 / 不是当前身份加密的）。
+  const now = nowFn || (()=>Date.now());
+  let entries = [];
+  let rooms = {};                                   // 房间口令哈希 -> { fp, at }
+  let persistent = !!backend;
+  let status = backend ? "unloaded" : "memory";
+  const normName = (n)=> typeof n==="string" ? n.normalize("NFKC").trim().slice(0,32) : "";
+  const num = (v,d)=> (typeof v==="number" && Number.isFinite(v) && v>0) ? Math.floor(v) : d;
+  function sanitize(list){
+    const out = [], seen = new Set();
+    if(!Array.isArray(list)) return out;
+    for(const e of list){
+      if(!e || typeof e!=="object" || typeof e.fp!=="string" || !FP_RE.test(e.fp) || seen.has(e.fp)) continue;
+      seen.add(e.fp);
+      const prev = Array.isArray(e.prev) ? e.prev.filter(x=>typeof x==="string" && FP_RE.test(x)).slice(0,8) : [];
+      out.push({ fp:e.fp, name:normName(e.name), first:num(e.first, now()), last:num(e.last, now()), count:num(e.count, 1), prev });
+      if(out.length >= TRUST_MAX) break;
+    }
+    return out;
+  }
+  function sanitizeRooms(obj){
+    const out = {};
+    if(!obj || typeof obj!=="object" || Array.isArray(obj)) return out;
+    const ids = Object.keys(obj).filter(k => /^[0-9a-f]{32}$/.test(k) && obj[k] && typeof obj[k]==="object" && typeof obj[k].fp==="string" && FP_RE.test(obj[k].fp));
+    ids.sort((a,b)=> num(obj[b].at,0) - num(obj[a].at,0));
+    for(const k of ids.slice(0, TRUST_MAX)) out[k] = { fp: obj[k].fp, at: num(obj[k].at, now()) };
+    return out;
+  }
+  function parseText(raw){
+    let o; try{ o = JSON.parse(raw); }catch{ return false; }
+    if(!o || typeof o!=="object") return false;
+    entries = sanitize(o.entries); rooms = sanitizeRooms(o.rooms); return true;
+  }
+  function serialize(){ return JSON.stringify({ v:1, entries, rooms }); }
+  async function load(){
+    entries = []; rooms = {};
+    if(!backend){ status = "memory"; return status; }
+    let raw;
+    try{ raw = await backend.read(); }catch{ persistent = false; status = "denied"; return status; }
+    if(raw === false){ status = "corrupted"; return status; }     // 存了但解不开：从空开始，下次保存覆盖
+    if(!raw){ status = "empty"; return status; }
+    status = parseText(raw) ? "ok" : "corrupted";
+    return status;
+  }
+  let chain = Promise.resolve();                    // 写操作串行化，保证最后一次写入的是最新状态
+  function save(){
+    if(!backend) return chain;
+    const text = serialize();
+    chain = chain.then(()=>backend.write(text)).catch(()=>{ persistent = false; });
+    return chain;
+  }
+  const find   = (fp)=> entries.find(e=>e.fp===fp) || null;
+  const byName = (name)=>{ name = normName(name); return name ? (entries.find(e=>e.name===name) || null) : null; };
+  function remember(fp, name){
+    if(!FP_RE.test(fp)) return null;
+    let e = find(fp);
+    if(e){ e.last = now(); e.count += 1; if(name && !e.name) e.name = normName(name); }
+    else{
+      e = { fp, name: normName(name), first: now(), last: now(), count: 1, prev: [] };
+      entries.push(e); while(entries.length > TRUST_MAX) entries.shift();
+    }
+    save(); return e;
+  }
+  function touch(fp){ const e = find(fp); if(e){ e.last = now(); e.count += 1; save(); } return e; }
+  // 已有联系人换了密钥：旧指纹进入 prev 历史，条目改指向新指纹，计数从头开始
+  function replaceKey(name, newFp){
+    const e = byName(name); if(!e || !FP_RE.test(newFp) || e.fp===newFp) return e;
+    const dup = find(newFp); if(dup && dup!==e) entries.splice(entries.indexOf(dup), 1);
+    e.prev = [e.fp, ...e.prev].slice(0,8); e.fp = newFp; e.first = now(); e.last = now(); e.count = 1;
+    save(); return e;
+  }
+  function remove(fp){
+    const i = entries.findIndex(e=>e.fp===fp); if(i<0) return false;
+    entries.splice(i,1);
+    for(const id of Object.keys(rooms)) if(rooms[id].fp===fp) delete rooms[id];
+    save(); return true;
+  }
+  function clear(){
+    entries = []; rooms = {};
+    if(backend) chain = chain.then(()=>{ if(backend.remove) backend.remove(); }).catch(()=>{});
+    return chain;
+  }
+  function list(){ return entries.slice().sort((a,b)=>b.last-a.last); }
+  function roomPeer(id){ return (typeof id==="string" && rooms[id]) || null; }
+  function setRoomPeer(id, fp){
+    if(typeof id!=="string" || !/^[0-9a-f]{32}$/.test(id) || !FP_RE.test(fp)) return false;
+    rooms[id] = { fp, at: now() };
+    const ids = Object.keys(rooms);
+    if(ids.length > TRUST_MAX){ ids.sort((a,b)=>rooms[a].at-rooms[b].at); for(const k of ids.slice(0, ids.length-TRUST_MAX)) delete rooms[k]; }
+    save(); return true;
+  }
+  function exportObj(){ return { app:"pqsession-trust", v:1, exportedAt: now(), entries, rooms }; }
+  function importText(text){
+    let o; try{ o = JSON.parse(text); }catch{ throw new Error("不是有效的 JSON"); }
+    if(!o || o.app!=="pqsession-trust" || o.v!==1) throw new Error("不是 pqsession 导出的信任列表");
+    let added = 0, merged = 0;
+    for(const e of sanitize(o.entries)){
+      const cur = find(e.fp);
+      if(cur){ merged++; if(!cur.name && e.name) cur.name = e.name; cur.first = Math.min(cur.first, e.first); cur.last = Math.max(cur.last, e.last); cur.count += e.count; }
+      else { entries.push(e); added++; }
+    }
+    while(entries.length > TRUST_MAX) entries.shift();
+    const inc = sanitizeRooms(o.rooms);
+    for(const id of Object.keys(inc)) if(!rooms[id] || rooms[id].at < inc[id].at) rooms[id] = inc[id];
+    save(); return { added, merged };
+  }
+  return { find, byName, remember, touch, replaceKey, remove, clear, list, exportObj, importText, normName,
+           load, save, serialize, parseText, roomPeer, setRoomPeer,
+           get persistent(){ return persistent; }, get size(){ return entries.length; }, get status(){ return status; } };
+}
+// 加密后端：密文 = base64(nonce(12) || AES-256-GCM(text))，AAD 绑定命名空间，防止把一个身份的列表挪给另一个身份
+async function trustSealText(key, ns, text){
+  const nonce = randomBytes(12);
+  const pt = enc.encode(text);
+  const ct = new Uint8Array(await subtle.encrypt({ name:"AES-GCM", iv:nonce, additionalData: L(TRUST_AAD + "|" + ns), tagLength:128 }, key, pt));
+  pq.wipe(pt);
+  return toB64(pq.concatBytes(nonce, ct));
+}
+async function trustOpenText(key, ns, blob){
+  const b = fromB64(String(blob||""));
+  if(b.length < 12+16) throw new Error("信任列表数据无效");
+  const pt = new Uint8Array(await subtle.decrypt({ name:"AES-GCM", iv:b.subarray(0,12), additionalData: L(TRUST_AAD + "|" + ns), tagLength:128 }, key, b.subarray(12)));
+  return dec.decode(pt);
+}
+function makeEncryptedBackend(ns, key, storage){
+  const k = TRUST_KEY + "." + ns;
+  return {
+    async read(){
+      const blob = storage.getItem(k);
+      if(!blob) return null;
+      try{ return await trustOpenText(key, ns, blob); }catch{ return false; }
+    },
+    async write(text){ storage.setItem(k, await trustSealText(key, ns, text)); },
+    remove(){ try{ storage.removeItem(k); }catch{} },
+  };
+}
+function storageOk(){
+  try{ const ls = window.localStorage; ls.setItem("pqsession.__probe","1"); ls.removeItem("pqsession.__probe"); return ls; }catch{ return null; }
+}
+let trust = makeTrustStore(null);                // 身份载入前只能是内存模式：本机加密列表要用身份私钥才能解开
+// 身份生成 / 载入后调用：派生本身份专属的存储密钥与命名空间，读出并解密列表
+async function trustInit(){
+  let backend = null;
+  if(myIdentity){
+    const ls = storageOk();
+    if(ls){
+      try{
+        const idBytes = pq.concatBytes(fromB64(myIdentity.pub.x25519_pub), fromB64(myIdentity.pub.mlkem_pub));
+        const ns = hexId(new Uint8Array(await subtle.digest("SHA-256", pq.concatBytes(L("pqsession-truststore-ns-v1"), idBytes))).subarray(0,16));
+        const salt = new Uint8Array(await subtle.digest("SHA-256", pq.concatBytes(L("pqsession-truststore-salt-v1"), idBytes)));
+        const ikm = fromB64(myIdentity.key.x25519_priv);
+        const hk = await subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+        pq.wipe(ikm);
+        const raw = new Uint8Array(await subtle.deriveBits({ name:"HKDF", hash:"SHA-256", salt, info:L("pqsession-truststore-key-v1") }, hk, 256));
+        const key = await subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt","decrypt"]);
+        pq.wipe(raw);
+        backend = makeEncryptedBackend(ns, key, ls);
+      }catch(e){ backend = null; log("信任列表存储密钥派生失败，改用内存模式："+(e && e.message || e),"w"); }
+    }
+  }
+  const t = makeTrustStore(backend);
+  const status = await t.load();
+  trust = t;
+  if(status==="corrupted") log("⚠ 本机信任列表无法解密（已损坏、被篡改，或不是用当前身份加密的），本次按空列表处理；下次保存会覆盖它。","e");
+  renderTrust();
+  if(peerFp) showTrustState();
+}
+
+function fmtDate(ts){ try{ return new Date(ts).toLocaleDateString(); }catch{ return "?"; } }
+function renderTrust(){
+  const box = $("trustList"); box.textContent = "";
+  const rows = trust.list();
+  $("trustCount").textContent = String(rows.length);
+  $("trustPersist").textContent = !myIdentity
+    ? "载入身份后才能读取本机加密保存的列表（列表按身份分别加密保存）。"
+    : trust.persistent
+      ? "存储位置：本浏览器 localStorage，已用当前身份的私钥派生密钥加密（随本站域名；换浏览器、换域名或换身份需要导出 / 导入）。"
+      : "⚠ 本浏览器不允许持久化存储（隐私模式或预览沙箱？）：只在本次页面内记住，关闭即忘。";
+  if(rows.length===0){
+    const d = document.createElement("div"); d.style.cssText="color:var(--faint);font-size:12px"; d.textContent="尚未核对过任何联系人。"; box.appendChild(d); return;
+  }
+  for(const e of rows){
+    const r = document.createElement("div"); r.className = "trow";
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = e.name || "（未命名）"; r.appendChild(nm);
+    const meta = document.createElement("span"); meta.className = "meta";
+    meta.textContent = `首次 ${fmtDate(e.first)} · 最近 ${fmtDate(e.last)} · ${e.count} 次` + (e.prev.length ? ` · 曾更换密钥 ${e.prev.length} 次` : "");
+    r.appendChild(meta);
+    const del = document.createElement("button"); del.className = "btn ghost"; del.style.cssText = "padding:4px 9px;font-size:11px"; del.textContent = "删除";
+    del.addEventListener("click", ()=>{
+      if(!confirm("删除这条已核对记录？下次再见到该指纹时需要重新带外核对。")) return;
+      trust.remove(e.fp); renderTrust(); if(peerFp===e.fp) showTrustState();
+    });
+    r.appendChild(del);
+    const code = document.createElement("code"); code.className = "fp";
+    code.style.cssText = "flex-basis:100%;color:var(--acc2);background:var(--acc-dim);padding:3px 8px;border-radius:7px"; code.textContent = e.fp;
+    r.appendChild(code);
+    box.appendChild(r);
+  }
+}
+let conflictAck = false;     // 重名冲突（疑似密钥变更）需要二次点击确认
+let swappedFp = null;        // 本次连接中“中途被替换出现”的指纹：即使在信任列表里也不自动通过
+function checkNameConflict(){
+  if(!peerFp || trust.find(peerFp)) return null;
+  const other = trust.byName($("peerNameIn").value);
+  return (other && other.fp!==peerFp) ? other : null;
+}
+function nameOf(fp){ const e = trust.find(fp); return e ? `『${e.name||"未命名"}』` : ""; }
+function showTrustState(){
+  const known = peerFp ? trust.find(peerFp) : null;
+  const prev  = (peerFp && room) ? trust.roomPeer(room) : null;
+  const swapped = !!(peerFp && swappedFp===peerFp);
+  const st = $("trustState");
+  $("trustNew").classList.toggle("hide", !!known && !swapped);
+  conflictAck = false; $("nameWarn").textContent = "";
+  if(known && !swapped){
+    st.textContent = `✓ 与已核对过的联系人『${known.name||"未命名"}』一致（首次核对 ${fmtDate(known.first)}，此后见过 ${known.count} 次），自动通过核对。`;
+    st.style.color = "var(--acc2)";
+  }else if(known && swapped){
+    st.textContent = `此指纹属于已核对的联系人『${known.name||"未命名"}』，但它是在连接中途替换出现的（异常流程），本次不自动通过：请重新带外核对后手动确认。`;
+    st.style.color = "var(--warn)";
+  }else if(prev && prev.fp!==peerFp){
+    st.textContent = `⚠ 上次（${fmtDate(prev.at)}）用这个房间口令时，对方的指纹是 ${prev.fp}${nameOf(prev.fp)}，这次不同。除非对方明确告诉你换了密钥，否则这是中间人攻击的典型迹象：先不要勾选，通过可信渠道确认。`;
+    st.style.color = "var(--err)";
+  }else{
+    const names = trust.list().map(e=>e.name).filter(Boolean);
+    if(trust.size){
+      st.textContent = `⚠ 新指纹：本浏览器从未核对过它。你已核对过的联系人有：${names.length ? names.join("、") : "（未命名）× "+trust.size}。若你在等的正是其中之一，这个新指纹就很可疑，请先当面或电话确认。`;
+      st.style.color = "var(--warn)";
+    }else{
+      st.textContent = "新指纹：本浏览器从未核对过它，请带外逐组核对。";
+      st.style.color = "";
+    }
+  }
+  $("verifyBtn").textContent = "✓ 指纹一致，建立会话";
+  updateVerifyBtn();
+}
+$("peerNameIn").addEventListener("input", ()=>{
+  conflictAck = false;
+  const other = checkNameConflict();
+  $("nameWarn").textContent = other ? `⚠ 『${other.name}』之前核对过的指纹与这个不一致。除非对方明确告诉你换了密钥，否则这是中间人的迹象。` : "";
+  $("verifyBtn").textContent = "✓ 指纹一致，建立会话";
+});
+$("trustExport").addEventListener("click", ()=>{
+  if(!trust.size) return log("信任列表为空，没有可导出的内容。","w");
+  if(!confirm("导出为【明文】JSON（含指纹、名字与房间记录，不含密钥）。请只保存在你信任的地方。继续？")) return;
+  download("pqsession-trusted.json", enc.encode(JSON.stringify(trust.exportObj(), null, 2)), "application/json");
+  log("已导出已核对联系人列表（明文；只含指纹与名字，不含密钥）。","ok");
+});
+$("trustImportBtn").addEventListener("click", ()=> $("trustImport").click());
+$("trustImport").addEventListener("change", async (e)=>{
+  const f = e.target.files && e.target.files[0]; e.target.value = ""; if(!f) return;
+  try{
+    if(f.size > 256*1024) throw new Error("文件过大，不像是导出的信任列表。");
+    const text = await readText(f);
+    let n = 0; try{ const o = JSON.parse(text); n = Array.isArray(o && o.entries) ? o.entries.length : 0; }catch{}
+    if(!confirm(`将合并约 ${n} 条已核对指纹到本机信任列表。导入等于信任这些指纹（同一指纹再次出现会自动通过核对）：只导入你自己导出的文件。继续？`)) return;
+    const r = trust.importText(text);
+    renderTrust(); if(peerFp) showTrustState();
+    log(`导入完成：新增 ${r.added} 条，合并 ${r.merged} 条。`,"ok");
+  }catch(err){ fail(err); }
+});
+$("trustClear").addEventListener("click", async ()=>{
+  if(!trust.size) return;
+  if(!confirm("清空全部已核对记录（当前身份）？之后每个指纹都需要重新带外核对。")) return;
+  await trust.clear(); renderTrust(); if(peerFp) showTrustState();
+  log("已清空已核对联系人列表。","w");
+});
+
+function updateVerifyBtn(){
+  // 已知且非中途替换的指纹会自动通过（fpVerified=true，按钮随之禁用）；其余一律要求勾选逐组核对声明。
+  $("verifyBtn").disabled = !(peerBundle && !fpVerified && $("fpCheck").checked);
+}
+$("fpCheck").addEventListener("change", updateVerifyBtn);
+
+function resetSessionState(keepConn){
+  if(call) vcTeardown("通话已随会话结束。","w");
+  if(session) pq.sessionWipe(session);
+  if(pendingInvite) pq.pendingWipe(pendingInvite);
+  session=null; pendingInvite=null; role=null; fpVerified=false; queuedInvite=null;
+  peerBundle=null; peerFp=null; helloSent=false; ctrSend=0; ctrRecv=0;
+  incoming.clear();
+  setChip("ch-sess","off");
+  const t=$("ch-sess-t"); if(t) t.textContent="会话 · 未建立";
+  $("peerFpBox").classList.remove("show");
+  $("verifyState").textContent=""; $("hsState").textContent=""; $("roleShow").textContent="";
+  $("fpCheck").checked=false;
+  $("trustNew").classList.remove("hide"); $("trustState").textContent="—"; $("trustState").style.color="";
+  $("peerNameIn").value=""; $("rememberChk").checked=true; $("nameWarn").textContent=""; conflictAck=false; swappedFp=null;
+  $("verifyBtn").textContent="✓ 指纹一致，建立会话";
+  updateVerifyBtn();
+  $("sessPeerFp").textContent="—"; $("sessPeerName").textContent="";
+  $("chatGate").style.display="";
+  $("chatLive").style.display="none";
+  $("transcript").innerHTML="";
+  if(!keepConn){ setChip("ch-peer","off"); $("netStatus").textContent="未连接"; }
+}
+
+$("connectBtn").addEventListener("click", async ()=>{
+  if(!myIdentity){ gotoTab("identity"); return log("请先在「① 身份」生成或载入身份。","w"); }
+  const url = $("srvUrl").value.trim();
+  const code = normalizeRoomCode($("roomCode").value);
+  if(!url || !code){ return log("请填写中继地址与房间口令。","w"); }
+  let u; try{ u = new URL(url); }catch{ return log("中继地址无效。","e"); }
+  if(u.protocol!=="ws:" && u.protocol!=="wss:") return log("中继地址必须以 ws:// 或 wss:// 开头。","e");
+  if(u.protocol==="ws:" && !/^(localhost|127\.|\[::1\]$)/.test(u.hostname))
+    log("⚠ 正在用未加密的 ws:// 连接非本机中继：内容仍受端到端加密保护，但网络上的观察者能看到房间哈希、消息大小与节奏。建议使用 wss://。","w");
+  if(code.length < 8)
+    log("⚠ 房间口令较短（不足 8 位）：中继若离线猜解口令，可能读到双方身份公钥（仍读不到聊天内容）。建议使用「随机生成」。","w");
+  $("connectBtn").disabled=true;
+  try{
+    resetSessionState(false);
+    log("派生房间密钥（Argon2id · 64 MiB，可能需要 1 到 3 秒）…");
+    roomCtx = await deriveRoom(code);
+    room = roomCtx.id;
+    setChip("ch-net","mid"); $("netStatus").textContent="连接中…";
+    log("连接中继 "+url+" …（房间哈希 "+room.slice(0,8)+"…）");
+    ws = new WebSocket(url);
+    ws.onopen = ()=>{ setChip("ch-net","on"); $("netStatus").textContent="已连接 · 已加入房间（哈希 "+room.slice(0,8)+"…）";
+      log("已连接，加入房间（中继只看到口令哈希 "+room.slice(0,8)+"…）。","ok"); ws.send(JSON.stringify({t:"join", room})); };
+    ws.onclose = ()=>{ setChip("ch-net","off"); setChip("ch-peer","off"); $("netStatus").textContent="连接已关闭";
+      $("connectBtn").disabled=false; $("disconnectBtn").disabled=true;
+      log("中继连接已关闭。","w"); };
+    ws.onerror = ()=>{ setChip("ch-net","off"); log("中继连接出错（地址不可达？Origin 被中继拒绝？沙箱拦截？）。","e"); };
+    ws.onmessage = (ev)=>{ if(typeof ev.data!=="string") return; let m; try{ m=JSON.parse(ev.data); }catch{ return; } if(m && typeof m==="object") onWs(m); };
+    $("disconnectBtn").disabled=false;
+  }catch(e){ $("connectBtn").disabled=false; fail(e); }
+});
+
+$("disconnectBtn").addEventListener("click", async ()=>{
+  const w = ws;
+  try{ if(w && w.readyState===1) await netSendKind(KIND_BYE); }catch{}
+  ws=null; roomCtx=null; room=null;
+  try{ if(w) w.close(); }catch{}
+  resetSessionState(false);
+  $("connectBtn").disabled=false; $("disconnectBtn").disabled=true;
+  log("已断开。");
+});
+
+function onWs(m){
+  if(m.t==="joined"){
+    setChip("ch-peer", m.n>=2 ? "on":"off");
+    if(m.n>=2){ log("房间内已有对方，开始交换（加密的）公开身份。"); sendHello(); }
+    else { $("netStatus").textContent="已连接 · 等待对方加入同一房间口令"; log("等待对方加入相同房间口令…"); }
+    return;
+  }
+  if(m.t==="peer"){
+    if(m.event==="join"){ setChip("ch-peer","on"); log("对方已加入，交换（加密的）公开身份。"); sendHello(); }
+    else if(m.event==="leave"){ setChip("ch-peer","off"); log("对方已离开，会话已重置。","w"); resetSessionState(true); }
+    return;
+  }
+  if(m.t==="full"){ log("房间已满（仅支持 1 对 1）。请换一个房间口令。","e"); try{ws.close();}catch{} return; }
+  if(m.t==="sig"){ onSig(m.d); return; }
+}
+
+async function sendHello(){
+  if(helloSent || !myIdentity || !roomCtx) return;
+  helloSent = true;
+  try{ await netSendKind(KIND_HELLO, enc.encode(JSON.stringify(myIdentity.pub))); }
+  catch(e){ helloSent = false; fail(e); }
+}
+
+// 角色判定：按身份公钥字节序，较小者为发起方（双方独立计算，结果一致）
+function decideRole(){
+  const mine = concatBytes(fromB64(myIdentity.pub.x25519_pub), fromB64(myIdentity.pub.mlkem_pub));
+  const peer = concatBytes(fromB64(peerBundle.x25519_pub), fromB64(peerBundle.mlkem_pub));
+  const n = Math.min(mine.length, peer.length);
+  for(let i=0;i<n;i++){ if(mine[i]!==peer[i]) return mine[i]<peer[i] ? "init":"resp"; }
+  if(mine.length!==peer.length) return mine.length<peer.length ? "init":"resp";
+  return "same";
+}
+
+/* 信令处理严格按到达顺序串行：信封计数器的重放判定、棘轮接收链的推进都依赖顺序；
+ * 若并发解密，后到的帧可能先完成，造成误判重放或链状态交错损坏。 */
+let sigChain = Promise.resolve();
+function onSig(d){
+  const p = sigChain.then(()=>onSigNow(d));
+  sigChain = p.then(()=>{}, ()=>{});            // 单条失败不阻塞后续
+  return p;
+}
+
+async function onSigNow(d){
+  try{
+    const f = await unsealKind(d);
+    if(!f) return;
+
+    if(f.kind===KIND_HELLO){
+      let pub; try{ pub = JSON.parse(dec.decode(f.payload)); }catch{ return log("收到无效的身份束。","e"); }
+      const { x, m } = pq.validatePub(pub);              // 形状 / 算法 / 长度不符直接抛出
+      const incomingFp = await pq.fingerprint(x, m);
+      // 安全闸门：把“已核对指纹”状态绑定到具体公钥。
+      // 哑中继（或拿到口令的人）可在你已带外核对并确认之后，再注入一条指向不同公钥的 hello。
+      // 若静默改用新公钥而不清除 fpVerified，随后的 invite 会在“你核对的是旧公钥”的前提下
+      // 与中间人建立会话。因此核对状态与公钥严格绑定：公钥变了就全部重置。
+      let swapped = false;
+      if(peerBundle){
+        if(incomingFp === peerFp){
+          if(!helloSent) sendHello();          // 与已知公钥完全一致：幂等
+          return;
+        }
+        log("⚠ 严重警告：对方公开身份已变更（新指纹与你先前看到的不一致）。已重置会话并清除“已核对”状态。请重新带外核对新指纹后再继续，谨防中间人攻击。","e");
+        resetSessionState(true);
+        swapped = true;                        // 异常流程：即使新指纹在信任列表里也不自动通过
+      }
+      peerBundle = { alg: pub.alg, x25519_pub: pub.x25519_pub, mlkem_pub: pub.mlkem_pub };
+      peerFp = incomingFp;
+      if(!helloSent) sendHello();              // 对方先发，则补发我方
+      role = decideRole();
+      if(role==="same"){ log("检测到双方使用了相同身份，无法建立会话。","e"); return; }
+      $("peerFp").textContent = peerFp;
+      $("peerFpBox").classList.add("show");
+      $("roleShow").textContent = role==="init" ? "你是发起方（A）" : "你是应答方（B）";
+      gotoTab("connect");
+      await decideTrust(swapped);
+      return;
+    }
+    if(f.kind===KIND_INVITE){
+      if(role!=="resp") return;
+      if(session){ return log("已有会话，忽略重复到达的握手邀请。","w"); }
+      if(!fpVerified){ queuedInvite = f.payload.slice(); $("hsState").textContent="对方已发起握手，等待你核对指纹…";
+        log("收到握手邀请，但你尚未确认指纹。请先核对并确认。","w"); return; }
+      await processInvite(f.payload.slice());
+      return;
+    }
+    if(f.kind===KIND_ACCEPT){
+      if(role!=="init") return;
+      if(!pendingInvite){ return log("收到 ACCEPT，但本端没有待完成的握手（重复或过期的应答），已忽略。","w"); }
+      await processAccept(f.payload.slice());
+      return;
+    }
+    if(f.kind===KIND_MSG){
+      if(!session){ log("收到消息但会话尚未建立。","w"); return; }
+      await recvMsgNow(f.payload.slice());
+      return;
+    }
+    if(f.kind===KIND_BYE){
+      if(session){ log("对方结束了会话。","w"); }
+      resetSessionState(true);
+      return;
+    }
+  }catch(e){ fail(e); }
+}
+
+/* ---- 指纹确认（安全闸门）---- */
+// 收到对方公开身份后的决策：命中信任列表（且不是中途替换出现的）→ 自动通过并直接握手；否则等待手动核对。
+async function decideTrust(swapped){
+  swappedFp = swapped ? peerFp : null;
+  showTrustState();
+  const known = trust.find(peerFp);
+  const prev  = room ? trust.roomPeer(room) : null;
+  if(known && !swapped){
+    fpVerified = true; updateVerifyBtn();
+    $("verifyState").textContent = `✓ 与已核对过的联系人『${known.name||"未命名"}』一致，已按本机信任列表自动通过核对。正在建立会话…`;
+    log(`已收到对方公开身份：与已核对过的联系人『${known.name||"未命名"}』一致（首次核对 ${fmtDate(known.first)}，此后见过 ${known.count} 次），自动通过核对。`,"ok");
+    if(prev && prev.fp!==peerFp) log(`提示：上次用这个房间口令时对方是另一位已核对的联系人${nameOf(prev.fp) || "（"+prev.fp.slice(0,9)+"…）"}。`,"w");
+    trust.touch(peerFp); trust.setRoomPeer(room, peerFp); renderTrust();
+    try{ await proceedAfterVerify(); }catch(e){ fail(e); }
+    return;
+  }
+  $("verifyState").textContent = "请通过可信渠道逐组核对上面的 16 组指纹，全部一致后勾选并点击下方按钮。";
+  if(prev && prev.fp!==peerFp) log("⚠ 同一房间口令下对方指纹与上次不同，谨防中间人。","e");
+  else if(known && swapped) log("已收到对方公开身份：指纹在信任列表中，但因连接中途被替换，本次要求手动确认。","w");
+  else log(trust.size
+    ? "已收到对方公开身份：这是一个新指纹，本浏览器从未核对过它。若你在等的是已核对过的联系人，请先怀疑。"
+    : "已收到对方公开身份。请务必带外核对完整指纹后再继续。","w");
+}
+async function proceedAfterVerify(){
+  if(role==="init"){ await startInvite(); }
+  else if(role==="resp" && queuedInvite){ const b=queuedInvite; queuedInvite=null; await processInvite(b); }
+  else if(role==="resp"){ $("hsState").textContent="已就绪，等待对方发起握手…"; }
+}
+$("verifyBtn").addEventListener("click", async ()=>{
+  if(!peerBundle || !peerFp || !$("fpCheck").checked){ return; }
+  const known = trust.find(peerFp);
+  if(known){
+    trust.touch(peerFp); trust.setRoomPeer(room, peerFp); renderTrust();   // 中途替换的已知指纹：手动确认后照常计数
+  }else if($("rememberChk").checked){
+    const other = checkNameConflict();
+    if(other && !conflictAck){
+      // 重名 = 你说“这是我核对过的那个人”，但指纹变了。中间人的典型表现就是“同一个人、新指纹”。
+      conflictAck = true;
+      $("nameWarn").textContent = `⚠ 『${other.name}』之前核对过的指纹与这个不一致。请再次当面或电话确认对方确实换了密钥；确认无误后再点一次按钮，旧指纹将记入历史。`;
+      $("verifyBtn").textContent = "⚠ 我已再次确认对方确实换了密钥，仍然建立会话";
+      log(`警告：『${other.name}』的指纹发生了变化。除非对方明确告知换了密钥，否则请中止。`,"e");
+      return;
+    }
+    if(other) trust.replaceKey(other.name, peerFp);
+    else trust.remember(peerFp, $("peerNameIn").value);
+    trust.setRoomPeer(room, peerFp);
+    renderTrust();
+  }
+  fpVerified = true;
+  updateVerifyBtn();
+  $("verifyState").textContent = "✓ 已确认指纹一致。正在建立会话…";
+  log("已确认对方指纹。开始握手。","ok");
+  try{ await proceedAfterVerify(); }catch(e){ fail(e); }
+});
+
+async function startInvite(){
+  await ensureNoble();
+  const { invite, pending } = await pq.sessionInvite(myIdentity.key, peerBundle);
+  pendingInvite = pending;
+  await netSendKind(KIND_INVITE, invite);
+  $("hsState").textContent = "已发送握手邀请，等待应答…";
+  log("已发送握手邀请 INVITE。","ok");
+}
+async function processInvite(bytes){
+  await ensureNoble();
+  const { accept, session: sess } = await pq.sessionAccept(myIdentity.key, peerBundle, bytes);
+  session = sess;
+  await netSendKind(KIND_ACCEPT, accept);
+  $("hsState").textContent = "已应答握手 ACCEPT。会话已建立。";
+  onSessionEstablished();
+}
+async function processAccept(bytes){
+  await ensureNoble();
+  const pend = pendingInvite;
+  const { session: sess } = await pq.sessionComplete(pend, bytes);
+  pq.pendingWipe(pend); pendingInvite = null;    // 握手完成即清除暂存（也防止重复的 ACCEPT 再次被处理）
+  session = sess;
+  $("hsState").textContent = "握手完成（密钥确认通过）。会话已建立。";
+  onSessionEstablished();
+}
+function onSessionEstablished(){
+  setChip("ch-sess","on");
+  const t=$("ch-sess-t"); if(t) t.textContent="会话 · 已建立";
+  $("sidShow").textContent = pq.hex(session.sid);
+  $("sessPeerFp").textContent = peerFp || "—";
+  const kn = peerFp ? trust.find(peerFp) : null;
+  $("sessPeerName").textContent = kn ? `『${kn.name||"未命名"}』` : "（本次新核对）";
+  $("chatGate").style.display="none";
+  $("chatLive").style.display="";
+  $("ctrSend").textContent="0"; $("ctrRecv").textContent="0";
+  vcUi();
+  log("✓ 安全会话已建立。可以开始聊天。","ok");
+  gotoTab("chat");
+}
+
+/* =====================  ③ 会话 ===================== */
+function bubble(side, text, sub){
+  const b=document.createElement("div"); b.className="bub "+(side==="me"?"out":"in"); b.textContent=text;
+  if(sub){ const s=document.createElement("div"); s.className="bubmeta"; s.textContent=sub; b.appendChild(s); }
+  const t=$("transcript"); t.appendChild(b); t.scrollTop=t.scrollHeight;
+  return b;
+}
+
+async function sendText(){
+  if(!session){ return log("会话尚未建立。","w"); }
+  const txt = $("msgIn").value;
+  if(!txt) return;
+  try{
+    if(!(await sendSecure(enc.encode(txt))))     // 与语音/文件同走串行棘轮，杜绝计数器互踩
+      return log("发送失败：会话或连接已断开。","w");
+    bubble("me", txt);
+    $("msgIn").value="";
+  }catch(e){ fail(e); }
+}
+$("sendBtn").addEventListener("click", sendText);
+$("msgIn").addEventListener("keydown", e=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendText(); } });
+
+wireDrop("fileDrop","fileMsg", async (f)=>{
+  if(!session){ return log("会话尚未建立。","w"); }
+  if(f.size > XFER_MAX_BYTES){ return log(`文件过大（${fmtSize(f.size)}），超过本机重组上限 ${fmtSize(XFER_MAX_BYTES)}。`,"e"); }
+  const tid = randomBytes(16);
+  // 通话期间用 64 KiB 小块 + 低发送水位：让语音帧穿插其间，避免长时间卡顿
+  const chunkSz = (call && call.state==="active") ? XFER_CHUNK_CALL : XFER_CHUNK;
+  if(chunkSz===XFER_CHUNK_CALL) log("通话进行中：文件改用小块低水位发送（为语音让路，吞吐略降）。","w");
+  const total = Math.max(1, Math.ceil(f.size / chunkSz));
+  const meta = enc.encode(JSON.stringify({ name: f.name, size: f.size, mime: f.type || "application/octet-stream" }));
+  const b = bubble("me", "📎 "+f.name, fmtSize(f.size)+" · 准备中…");
+  try{
+    // FSTART：声明文件名 / 大小 / 分块数（本身也经棘轮加密，中继看不到）
+    const start = pq.concatBytes(new Uint8Array([0x01, FSTART]), tid, u32be(total), u16be(meta.length), meta);
+    if(!(await sendSecure(start))) throw new Error("连接已断开，传输中止。");
+    // 逐块：流式读取 + 背压，每块单独棘轮加密为一条消息（经 sendSecure 与语音帧串行互斥）
+    for(let i=0;i<total;i++){
+      const off = i*chunkSz;
+      const part = new Uint8Array(await f.slice(off, Math.min(off+chunkSz, f.size)).arrayBuffer());
+      const frame = pq.concatBytes(new Uint8Array([0x01, FCHUNK]), tid, u32be(i), part);
+      await waitBuffer();
+      if(!(await sendSecure(frame))) throw new Error("连接已断开，传输中止。");
+      bmeta(b, fmtSize(f.size)+` · 发送 ${Math.round((i+1)/total*100)}%`);
+    }
+    bmeta(b, fmtSize(f.size)+" · 已发送 ✓");
+    log(`文件已加密发送：${f.name}（${fmtSize(f.size)}，${total} 块，逐块前向保密）。`,"ok");
+  }catch(e){
+    try{ await sendSecure(pq.concatBytes(new Uint8Array([0x01, FABORT]), tid)); }catch{}
+    bmeta(b, "发送失败");
+    fail(e);
+  }
+});
+
+/* 接收侧串行化：所有信令（含语音帧，通话时约 17 条/秒且常成批到达）已在 onSig 的 sigChain 上
+ * 按到达顺序逐条处理；若并发解密，接收链密钥与计数器会交错损坏。任何新代码都不得绕过 onSig。 */
+async function recvMsgNow(bytes){
+  if(!session) return;                           // 排队期间会话已被重置
+  const pt = await pq.ratchetDecrypt(session, bytes);
+  ctrRecv++; $("ctrRecv").textContent=String(ctrRecv);
+
+  // ---- 语音通话帧 ----
+  if(pt.length>=10 && pt[0]===0x01 && (pt[1]===VRING || pt[1]===VACK || pt[1]===VEND || pt[1]===VDATA)){
+    return vcOnFrame(pt);
+  }
+
+  // ---- 分块文件帧 ----
+  if(pt.length>=2 && pt[0]===0x01 && (pt[1]===FSTART || pt[1]===FCHUNK || pt[1]===FABORT)){
+    if(pt.length < 18){ return log("收到损坏的文件帧。","e"); }
+    const type = pt[1];
+    const tid = hexId(pt.subarray(2,18));
+
+    if(type===FSTART){
+      if(pt.length < 24){ return log("文件起始帧不完整。","e"); }
+      const total = readU32be(pt,18);
+      const mlen  = readU16be(pt,22);
+      if(24+mlen > pt.length){ return log("文件起始帧不完整。","e"); }
+      let meta={}; try{ meta = JSON.parse(dec.decode(pt.subarray(24,24+mlen))); }catch{ return log("文件起始帧元数据无效。","e"); }
+      const size = Number(meta.size);
+      if(!(size>=0) || size > XFER_MAX_BYTES || total<1 || total>XFER_MAXCHUNKS){
+        return log(`拒收文件（声明大小 ${fmtSize(size||0)} 或分块数异常）。`,"e");
+      }
+      if(incoming.has(tid)) return;                       // 重复的起始帧：忽略
+      if(incoming.size >= 8){ return log("同时进行的接收传输过多（上限 8），已拒收新文件。","e"); }
+      const name = safeName(meta.name);
+      const b = bubble("peer", "📎 "+name, fmtSize(size)+" · 接收 0%");
+      incoming.set(tid, { name, size, mime: typeof meta.mime==="string" ? meta.mime.slice(0,100) : "", total, got:0, bytes:0, parts:new Array(total), bub:b });
+      return;
+    }
+
+    const st = incoming.get(tid);
+    if(!st) return;                       // 未知 / 已结束的传输：忽略
+    if(type===FABORT){ bmeta(st.bub, "对方已取消"); incoming.delete(tid); return; }
+
+    // FCHUNK
+    const idx = readU32be(pt,18);
+    if(idx>=st.total){ incoming.delete(tid); return log("文件块序号越界，已丢弃该传输。","e"); }
+    if(st.parts[idx]) return;             // 去重
+    const chunk = pt.subarray(22);
+    if(chunk.length > XFER_CHUNK){ incoming.delete(tid); return log("文件块超出约定大小，已丢弃该传输。","e"); }
+    st.bytes += chunk.length;
+    if(st.bytes > XFER_MAX_BYTES){ incoming.delete(tid); return log("文件超过本机重组上限，已中止。","e"); }
+    st.parts[idx] = chunk; st.got++;
+    bmeta(st.bub, fmtSize(st.size)+` · 接收 ${Math.round(st.got/st.total*100)}%`);
+
+    if(st.got===st.total){
+      if(st.bytes !== st.size){ incoming.delete(tid); bmeta(st.bub, "校验失败（大小不符）"); return log("文件重组后大小与声明不符，疑似损坏，已拒绝。","e"); }
+      downloadBlobParts(st.name, st.parts, st.mime);
+      bmeta(st.bub, fmtSize(st.size)+" · 已接收并下载 ✓");
+      incoming.delete(tid);
+      log(`已接收并解密文件：${st.name}（${fmtSize(st.size)}）。`,"ok");
+    }
+    return;
+  }
+
+  // ---- 旧版单条文件（向后兼容）：\x01 'F' ':' ----
+  if(pt.length>3 && pt[0]===0x01 && pt[1]===0x46 && pt[2]===0x3a){
+    let i=3; while(i<pt.length && pt[i]!==0x0a) i++;
+    const name = safeName(dec.decode(pt.subarray(3,i)));
+    const body = pt.subarray(i+1);
+    downloadBlobParts(name, [body]);
+    bubble("peer", "📎 "+name+"（已自动下载）", fmtSize(body.length));
+    return;
+  }
+
+  // ---- 纯文本 ----
+  bubble("peer", dec.decode(pt));
+}
+
+$("endBtn").addEventListener("click", async ()=>{
+  try{ await netSendKind(KIND_BYE); }catch{}
+  resetSessionState(true);
+  log("已结束会话（如需新会话，请重新核对指纹并握手）。建议定期重新握手以获得前向更新。","ok");
+  gotoTab("connect");
+});
+
+/* ---- 启动 ---- */
+(function boot(){
+  const hasSubtle = !!(window.crypto && window.crypto.subtle);
+  setChip("ch-wc", hasSubtle ? "on":"off");
+  setChip("ch-kem","off"); setChip("ch-id","off"); setChip("ch-net","off");
+  setChip("ch-peer","off"); setChip("ch-sess","off");
+  $("disconnectBtn").disabled=true; $("verifyBtn").disabled=true;
+  $("chatLive").style.display="none";
+  refreshStatus();
+  renderTrust();
+  if(!window.isSecureContext || !hasSubtle){
+    $("secBanner").classList.add("show");
+    log("当前不是安全上下文（或浏览器缺少 Web Crypto）：无法生成密钥与建立会话。请改用 https:// 或 localhost。","e");
+  }
+  log("就绪。先生成身份 → 连接中继并加入同一房间口令 → 逐组核对完整指纹 → 自动握手 → 聊天。");
+  ensureNoble().catch(()=>{ setChip("ch-kem","off"); $("banner").classList.add("show"); log("ML-KEM 库加载失败（本地 vendor/ 不存在且 CDN 不可达？预览沙箱拦截？）。请部署后用浏览器访问，并执行 npm run vendor。","w"); });
+})();
+
+</script>
+</body>
+</html>
